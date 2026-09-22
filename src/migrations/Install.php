@@ -4,31 +4,24 @@ declare(strict_types=1);
 
 namespace viesrood\mybooks\migrations;
 
-use Craft;
 use craft\db\Migration;
 use craft\db\Table;
+use viesrood\mybooks\records\AccountRecord;
 use viesrood\mybooks\records\BookRecord;
-use viesrood\mybooks\records\ReaderRecord;
-use viesrood\mybooks\services\ReadersService;
+use viesrood\mybooks\records\CoverRecord;
 
 /**
- * Creates the readers and books tables.
+ * Creates the sync cache (accounts and their books) and the cover cache.
+ * Hand-picked books need no table: they live in the field values.
  */
 class Install extends Migration
 {
     public function safeUp(): bool
     {
-        if (!$this->db->tableExists(ReaderRecord::TABLE)) {
-            $this->createTable(ReaderRecord::TABLE, [
+        if (!$this->db->tableExists(AccountRecord::TABLE)) {
+            $this->createTable(AccountRecord::TABLE, [
                 'id' => $this->primaryKey(),
-                'name' => $this->string()->notNull(),
-                'handle' => $this->string(64)->notNull(),
-                'provider' => $this->string(32)->notNull(),
-                'account' => $this->string(),
-                'token' => $this->string(),
-                'shelves' => $this->string(),
-                'sortOrder' => $this->smallInteger()->unsigned()->notNull()->defaultValue(0),
-                // Runtime state: deliberately not in project config.
+                'account' => $this->string(100)->notNull(),
                 'lastSyncedAt' => $this->dateTime(),
                 'lastError' => $this->text(),
                 'dateCreated' => $this->dateTime()->notNull(),
@@ -36,15 +29,13 @@ class Install extends Migration
                 'uid' => $this->uid(),
             ]);
 
-            $this->createIndex(null, ReaderRecord::TABLE, ['handle'], true);
-            $this->createIndex(null, ReaderRecord::TABLE, ['uid'], true);
+            $this->createIndex(null, AccountRecord::TABLE, ['account'], true);
         }
 
         if (!$this->db->tableExists(BookRecord::TABLE)) {
             $this->createTable(BookRecord::TABLE, [
                 'id' => $this->primaryKey(),
-                'readerId' => $this->integer()->notNull(),
-                'provider' => $this->string(32)->notNull(),
+                'accountId' => $this->integer()->notNull(),
                 'externalId' => $this->string(64)->notNull(),
                 'shelf' => $this->string(16)->notNull(),
                 'title' => $this->string()->notNull(),
@@ -53,10 +44,6 @@ class Install extends Migration
                 'isbn' => $this->string(13),
                 'url' => $this->string(2000),
                 'coverUrl' => $this->string(2000),
-                'coverAssetId' => $this->integer(),
-                // The coverUrl that coverAssetId was downloaded from, so a
-                // changed cover is fetched again and an unchanged one never is.
-                'coverSourceUrl' => $this->string(2000),
                 'progress' => $this->tinyInteger()->unsigned(),
                 'rating' => $this->decimal(2, 1),
                 // Calendar dates, not timestamps: no timezone to get wrong.
@@ -70,10 +57,25 @@ class Install extends Migration
                 'uid' => $this->uid(),
             ]);
 
-            $this->createIndex(null, BookRecord::TABLE, ['readerId', 'provider', 'externalId'], true);
-            $this->createIndex(null, BookRecord::TABLE, ['readerId', 'shelf', 'sortOrder'], false);
-            $this->addForeignKey(null, BookRecord::TABLE, ['readerId'], ReaderRecord::TABLE, ['id'], 'CASCADE');
-            $this->addForeignKey(null, BookRecord::TABLE, ['coverAssetId'], Table::ASSETS, ['id'], 'SET NULL');
+            $this->createIndex(null, BookRecord::TABLE, ['accountId', 'externalId'], true);
+            $this->createIndex(null, BookRecord::TABLE, ['accountId', 'shelf', 'sortOrder'], false);
+            $this->addForeignKey(null, BookRecord::TABLE, ['accountId'], AccountRecord::TABLE, ['id'], 'CASCADE');
+        }
+
+        if (!$this->db->tableExists(CoverRecord::TABLE)) {
+            $this->createTable(CoverRecord::TABLE, [
+                'id' => $this->primaryKey(),
+                'urlHash' => $this->char(40)->notNull(),
+                'url' => $this->string(2000)->notNull(),
+                'assetId' => $this->integer(),
+                'status' => $this->string(16)->notNull(),
+                'dateCreated' => $this->dateTime()->notNull(),
+                'dateUpdated' => $this->dateTime()->notNull(),
+                'uid' => $this->uid(),
+            ]);
+
+            $this->createIndex(null, CoverRecord::TABLE, ['urlHash'], true);
+            $this->addForeignKey(null, CoverRecord::TABLE, ['assetId'], Table::ASSETS, ['id'], 'SET NULL');
         }
 
         return true;
@@ -81,13 +83,10 @@ class Install extends Migration
 
     public function safeDown(): bool
     {
-        // Remove the readers from project config first, while the tables the
-        // handlers write to still exist. Downloaded covers stay in their
-        // volume; they are ordinary assets.
-        Craft::$app->getProjectConfig()->remove(ReadersService::CONFIG_KEY);
-
+        // Downloaded covers stay in their volume; they are ordinary assets.
+        $this->dropTableIfExists(CoverRecord::TABLE);
         $this->dropTableIfExists(BookRecord::TABLE);
-        $this->dropTableIfExists(ReaderRecord::TABLE);
+        $this->dropTableIfExists(AccountRecord::TABLE);
 
         return true;
     }

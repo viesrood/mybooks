@@ -7,25 +7,20 @@ namespace viesrood\mybooks;
 use Craft;
 use craft\base\Model;
 use craft\base\Plugin as BasePlugin;
-use craft\events\RebuildConfigEvent;
 use craft\events\RegisterComponentTypesEvent;
 use craft\events\RegisterTemplateRootsEvent;
-use craft\events\RegisterUrlRulesEvent;
-use craft\events\RegisterUserPermissionsEvent;
 use craft\services\Dashboard;
 use craft\services\Fields;
-use craft\services\ProjectConfig;
-use craft\services\UserPermissions;
+use craft\services\Utilities;
 use craft\web\twig\variables\CraftVariable;
-use craft\web\UrlManager;
 use craft\web\View;
-use viesrood\mybooks\fields\ReaderField;
+use viesrood\mybooks\fields\BooksField;
 use viesrood\mybooks\models\Settings;
+use viesrood\mybooks\services\AccountsService;
 use viesrood\mybooks\services\BooksService;
 use viesrood\mybooks\services\CoversService;
-use viesrood\mybooks\services\ProvidersService;
-use viesrood\mybooks\services\ReadersService;
 use viesrood\mybooks\services\SyncService;
+use viesrood\mybooks\utilities\MyBooksUtility;
 use viesrood\mybooks\variables\MyBooksVariable;
 use viesrood\mybooks\widgets\ReadingWidget;
 use yii\base\Event;
@@ -33,29 +28,24 @@ use yii\base\Event;
 /**
  * My Books plugin.
  *
- * Shows what people are reading:
- * - readers (one account each) at Open Library, Hardcover, or entered by hand;
- * - their shelves are synced into a local table by cron or queue, so a page
- *   never waits on, or breaks because of, a book service;
+ * A Books field that shows what someone is reading:
+ * - pick books by hand (search Open Library by title or ISBN), or link an
+ *   Open Library account whose shelves are synced by cron or queue;
+ * - a page never waits on, or breaks because of, Open Library;
  * - covers are copied into a Craft volume, so visitors never contact a
  *   third party;
- * - a Reader field, a dashboard widget and dependency-free Twig markup.
+ * - a utility, a dashboard widget and dependency-free Twig markup.
  *
+ * @property-read AccountsService $accounts
  * @property-read BooksService $books
  * @property-read CoversService $covers
- * @property-read ProvidersService $providers
- * @property-read ReadersService $readers
  * @property-read SyncService $sync
  */
 class Plugin extends BasePlugin
 {
-    public const PERMISSION_MANAGE_BOOKS = 'mybooks-manageBooks';
-
     public string $schemaVersion = '1.0.0';
 
     public bool $hasCpSettings = true;
-
-    public bool $hasCpSection = true;
 
     /**
      * @return array{components: array<string, mixed>}
@@ -64,10 +54,9 @@ class Plugin extends BasePlugin
     {
         return [
             'components' => [
+                'accounts' => AccountsService::class,
                 'books' => BooksService::class,
                 'covers' => CoversService::class,
-                'providers' => ProvidersService::class,
-                'readers' => ReadersService::class,
                 'sync' => SyncService::class,
             ],
         ];
@@ -81,12 +70,9 @@ class Plugin extends BasePlugin
             $this->controllerNamespace = 'viesrood\\mybooks\\console\\controllers';
         }
 
-        $this->registerProjectConfigHandlers();
         $this->registerComponentTypes();
         $this->registerVariable();
         $this->registerSiteTemplateRoot();
-        $this->registerCpRoutes();
-        $this->registerPermissions();
     }
 
     public function getBooks(): BooksService
@@ -105,18 +91,10 @@ class Plugin extends BasePlugin
         return $service;
     }
 
-    public function getProviders(): ProvidersService
+    public function getAccounts(): AccountsService
     {
-        /** @var ProvidersService $service */
-        $service = $this->get('providers');
-
-        return $service;
-    }
-
-    public function getReaders(): ReadersService
-    {
-        /** @var ReadersService $service */
-        $service = $this->get('readers');
+        /** @var AccountsService $service */
+        $service = $this->get('accounts');
 
         return $service;
     }
@@ -137,29 +115,6 @@ class Plugin extends BasePlugin
         return $settings;
     }
 
-    /**
-     * @return array<string, mixed>|null
-     */
-    public function getCpNavItem(): ?array
-    {
-        $user = Craft::$app->getUser();
-
-        if (!$user->getIsAdmin() && !$user->checkPermission(self::PERMISSION_MANAGE_BOOKS)) {
-            return null;
-        }
-
-        $item = parent::getCpNavItem();
-
-        if ($item === null) {
-            return null;
-        }
-
-        $item['label'] = Craft::t('mybooks', 'My Books');
-        $item['url'] = 'mybooks';
-
-        return $item;
-    }
-
     protected function createSettingsModel(): ?Model
     {
         return new Settings();
@@ -170,7 +125,7 @@ class Plugin extends BasePlugin
         /** @var View $view */
         $view = Craft::$app->getView();
 
-        $volumeOptions = [['label' => Craft::t('mybooks', 'None: link covers from the book service'), 'value' => '']];
+        $volumeOptions = [['label' => Craft::t('mybooks', 'None: link covers from Open Library'), 'value' => '']];
 
         foreach (Craft::$app->getVolumes()->getAllVolumes() as $volume) {
             $volumeOptions[] = ['label' => $volume->name, 'value' => (string)$volume->uid];
@@ -184,31 +139,21 @@ class Plugin extends BasePlugin
         ], View::TEMPLATE_MODE_CP);
     }
 
-    private function registerProjectConfigHandlers(): void
-    {
-        $readers = $this->getReaders();
-
-        Craft::$app->getProjectConfig()
-            ->onAdd(ReadersService::CONFIG_KEY . '.{uid}', [$readers, 'handleChangedReader'])
-            ->onUpdate(ReadersService::CONFIG_KEY . '.{uid}', [$readers, 'handleChangedReader'])
-            ->onRemove(ReadersService::CONFIG_KEY . '.{uid}', [$readers, 'handleDeletedReader']);
-
-        Event::on(
-            ProjectConfig::class,
-            ProjectConfig::EVENT_REBUILD,
-            static function (RebuildConfigEvent $event) use ($readers): void {
-                $readers->handleRebuild($event);
-            }
-        );
-    }
-
     private function registerComponentTypes(): void
     {
         Event::on(
             Fields::class,
             Fields::EVENT_REGISTER_FIELD_TYPES,
             static function (RegisterComponentTypesEvent $event): void {
-                $event->types[] = ReaderField::class;
+                $event->types[] = BooksField::class;
+            }
+        );
+
+        Event::on(
+            Utilities::class,
+            Utilities::EVENT_REGISTER_UTILITIES,
+            static function (RegisterComponentTypesEvent $event): void {
+                $event->types[] = MyBooksUtility::class;
             }
         );
 
@@ -245,40 +190,6 @@ class Plugin extends BasePlugin
             View::EVENT_REGISTER_SITE_TEMPLATE_ROOTS,
             static function (RegisterTemplateRootsEvent $event): void {
                 $event->roots['mybooks'] = __DIR__ . '/templates/_site';
-            }
-        );
-    }
-
-    private function registerCpRoutes(): void
-    {
-        Event::on(
-            UrlManager::class,
-            UrlManager::EVENT_REGISTER_CP_URL_RULES,
-            static function (RegisterUrlRulesEvent $event): void {
-                $event->rules['mybooks'] = 'mybooks/readers/index';
-                $event->rules['mybooks/readers/new'] = 'mybooks/readers/edit';
-                $event->rules['mybooks/readers/<readerId:\d+>'] = 'mybooks/readers/edit';
-                $event->rules['mybooks/readers/<readerId:\d+>/books'] = 'mybooks/books/index';
-                $event->rules['mybooks/readers/<readerId:\d+>/books/new'] = 'mybooks/books/edit';
-                $event->rules['mybooks/readers/<readerId:\d+>/books/<bookId:\d+>'] = 'mybooks/books/edit';
-            }
-        );
-    }
-
-    private function registerPermissions(): void
-    {
-        Event::on(
-            UserPermissions::class,
-            UserPermissions::EVENT_REGISTER_PERMISSIONS,
-            static function (RegisterUserPermissionsEvent $event): void {
-                $event->permissions[] = [
-                    'heading' => Craft::t('mybooks', 'My Books'),
-                    'permissions' => [
-                        self::PERMISSION_MANAGE_BOOKS => [
-                            'label' => Craft::t('mybooks', 'Manage hand-entered books and start syncs'),
-                        ],
-                    ],
-                ];
             }
         );
     }

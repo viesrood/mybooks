@@ -1,13 +1,9 @@
-{% if not hasReaders %}
-    <p class="zilch small">{{ 'There are no readers yet. Add one under My Books.'|t('mybooks') }}</p>
-{% elseif groups is empty %}
+{% if groups is empty %}
     <p class="zilch small">{{ 'Nothing on this shelf.'|t('mybooks') }}</p>
 {% else %}
     <div class="mybooks-widget">
         {% for group in groups %}
-            {% if showNames %}
-                <h3 class="mybooks-widget__name">{{ group.reader.name }}</h3>
-            {% endif %}
+            <h3 class="mybooks-widget__name">{{ group.name }}</h3>
             <ul class="mybooks-widget__list" role="list">
                 {% for book in group.books %}
                     <li class="mybooks-widget__book">

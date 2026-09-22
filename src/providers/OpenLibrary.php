@@ -9,7 +9,6 @@ use viesrood\mybooks\base\Provider;
 use viesrood\mybooks\base\ProviderException;
 use viesrood\mybooks\enums\Shelf;
 use viesrood\mybooks\models\BookData;
-use viesrood\mybooks\models\Reader;
 
 /**
  * Open Library's public reading log.
@@ -26,19 +25,9 @@ class OpenLibrary extends Provider
     /** Open Library's own maximum page size. */
     private const PAGE_SIZE = 100;
 
-    public static function handle(): string
-    {
-        return 'openlibrary';
-    }
-
     public static function displayName(): string
     {
         return 'Open Library';
-    }
-
-    public function requiresAccount(): bool
-    {
-        return true;
     }
 
     public static function shelfKey(Shelf $shelf): string
@@ -50,25 +39,25 @@ class OpenLibrary extends Provider
         };
     }
 
-    public function testConnection(Reader $reader): string
+    public function testConnection(string $account): string
     {
-        $data = $this->requestPage($reader, Shelf::Reading, 1, 1);
+        $data = $this->requestPage($account, Shelf::Reading, 1, 1);
 
         return Craft::t('mybooks', 'Connected to the public reading log of {account}.', [
-            'account' => $this->username($reader),
+            'account' => self::normalizeUsername($account),
         ]) . ' ' . Craft::t('mybooks', '{count, plural, =0{No books} =1{One book} other{# books}} on “{shelf}”.', [
             'count' => (int)($data['numFound'] ?? 0),
             'shelf' => Shelf::Reading->label(),
         ]);
     }
 
-    protected function fetchShelf(Reader $reader, Shelf $shelf, int $limit): array
+    protected function fetchShelf(string $account, Shelf $shelf, int $limit): array
     {
         $books = [];
         $page = 1;
 
         while (count($books) < $limit) {
-            $data = $this->requestPage($reader, $shelf, $page, min(self::PAGE_SIZE, $limit));
+            $data = $this->requestPage($account, $shelf, $page, min(self::PAGE_SIZE, $limit));
             $entries = $data['reading_log_entries'] ?? null;
 
             if (!is_array($entries) || $entries === []) {
@@ -127,34 +116,58 @@ class OpenLibrary extends Provider
     }
 
     /**
-     * Title, authors and cover for an ISBN, for the hand-entered book form.
-     * One search request; returns null when Open Library does not know it.
+     * Searches Open Library by title, author or ISBN, for the Books field.
+     * An ISBN (10 or 13 digits, dashes allowed) searches on ISBN only.
      *
+     * @return BookData[]
      * @throws ProviderException
      */
-    public function lookupIsbn(string $isbn): ?BookData
+    public function search(string $query, int $limit = 8): array
     {
+        $query = trim($query);
+
+        if (mb_strlen($query) < 2) {
+            return [];
+        }
+
+        $isbn = BookData::isbn($query);
+        $params = $isbn !== null ? ['isbn' => $isbn] : ['q' => mb_substr($query, 0, 200)];
+
         $data = $this->requestJson('GET', self::BASE_URL . '/search.json', [
-            'query' => [
-                'isbn' => $isbn,
+            'query' => $params + [
                 'fields' => 'key,title,subtitle,author_name,cover_i',
-                'limit' => 1,
+                'limit' => max(1, min(20, $limit)),
             ],
         ]);
 
-        return self::mapSearchDoc($data['docs'][0] ?? null, $isbn);
+        $books = [];
+
+        foreach (is_array($data['docs'] ?? null) ? $data['docs'] : [] as $doc) {
+            $book = self::mapSearchDoc($doc, $isbn);
+
+            if ($book !== null && $book->title !== '') {
+                $books[$book->externalId] = $book;
+            }
+        }
+
+        return array_values($books);
     }
 
     /**
      * @param mixed $doc One document from search.json.
      */
-    public static function mapSearchDoc(mixed $doc, string $isbn): ?BookData
+    public static function mapSearchDoc(mixed $doc, ?string $isbn = null): ?BookData
     {
         if (!is_array($doc) || !is_string($doc['key'] ?? null)) {
             return null;
         }
 
         $workId = basename($doc['key']);
+
+        if (preg_match('/^OL\d+W$/', $workId) !== 1) {
+            return null;
+        }
+
         $coverId = $doc['cover_i'] ?? null;
 
         return BookData::create($workId, Shelf::Reading, [
@@ -162,7 +175,7 @@ class OpenLibrary extends Provider
             'subtitle' => $doc['subtitle'] ?? null,
             'authors' => $doc['author_name'] ?? [],
             'isbn' => $isbn,
-            'url' => preg_match('/^OL\d+W$/', $workId) === 1 ? self::BASE_URL . '/works/' . $workId : null,
+            'url' => self::BASE_URL . '/works/' . $workId,
             'coverUrl' => is_int($coverId) && $coverId > 0 ? self::coverUrl($coverId) : null,
         ]);
     }
@@ -177,9 +190,13 @@ class OpenLibrary extends Provider
      * @return array<mixed>
      * @throws ProviderException
      */
-    private function requestPage(Reader $reader, Shelf $shelf, int $page, int $limit): array
+    private function requestPage(string $account, Shelf $shelf, int $page, int $limit): array
     {
-        $username = $this->username($reader);
+        $username = self::normalizeUsername($account);
+
+        if ($username === '') {
+            throw new ProviderException(Craft::t('mybooks', 'Enter an Open Library username.'));
+        }
 
         return $this->requestJson('GET', sprintf(
             '%s/people/%s/books/%s.json',
@@ -195,21 +212,18 @@ class OpenLibrary extends Provider
     }
 
     /**
-     * @throws ProviderException
+     * A bare username from whatever was typed or pasted: the username itself,
+     * or a profile URL such as https://openlibrary.org/people/jane/books.
+     * Returns '' when nothing usable is left.
      */
-    private function username(Reader $reader): string
+    public static function normalizeUsername(?string $value): string
     {
-        $username = trim($reader->getParsedAccount());
+        $username = trim((string)$value);
 
-        // Accept a pasted profile URL as well as the bare username.
         if (preg_match('#openlibrary\.org/people/([^/?\#]+)#', $username, $m) === 1) {
             $username = rawurldecode($m[1]);
         }
 
-        if ($username === '') {
-            throw new ProviderException(Craft::t('mybooks', 'Enter the Open Library username of this reader.'));
-        }
-
-        return $username;
+        return preg_match('/^[A-Za-z0-9_.\-]{1,100}$/', $username) === 1 ? $username : '';
     }
 }

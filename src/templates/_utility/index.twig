@@ -1,0 +1,61 @@
+{% if not coversEnabled %}
+    <blockquote class="note warning">
+        <p>{{ 'Covers are loaded from Open Library, so every visitor’s browser contacts Open Library. Choose a cover volume in the plugin settings to keep a local copy instead.'|t('mybooks') }}</p>
+    </blockquote>
+{% endif %}
+
+<h2>{{ 'Linked Open Library accounts'|t('mybooks') }}</h2>
+
+{% if rows is empty %}
+    <p class="light">{{ 'No Books field links to an Open Library account yet. Hand-picked books need no sync.'|t('mybooks') }}</p>
+{% else %}
+    <table class="data fullwidth">
+        <thead>
+            <tr>
+                <th scope="col">{{ 'Account'|t('mybooks') }}</th>
+                <th scope="col">{{ 'Used by'|t('mybooks') }}</th>
+                <th scope="col">{{ 'Books'|t('mybooks') }}</th>
+                <th scope="col">{{ 'Last sync'|t('mybooks') }}</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in rows %}
+                <tr>
+                    <th scope="row">
+                        {% if row.status and row.status.lastError %}
+                            <span class="status red" role="img" aria-label="{{ 'Error'|t('mybooks') }}"></span>
+                        {% elseif row.status and row.status.lastSyncedAt %}
+                            <span class="status green" role="img" aria-label="{{ 'Synced'|t('mybooks') }}"></span>
+                        {% else %}
+                            <span class="status orange" role="img" aria-label="{{ 'Not synced yet'|t('mybooks') }}"></span>
+                        {% endif %}
+                        <a href="https://openlibrary.org/people/{{ row.account|url_encode }}" target="_blank" rel="noopener"><code>{{ row.account }}</code></a>
+                        {% if row.status and row.status.lastError %}
+                            <div class="error smalltext">{{ row.status.lastError }}</div>
+                        {% endif %}
+                    </th>
+                    <td>
+                        {% for element in row.elements|filter(e => e.uri is not null)|slice(0, 5) %}
+                            {{ element.title }}{% if not loop.last %}, {% endif %}
+                        {% endfor %}
+                    </td>
+                    <td>{{ row.books }}</td>
+                    <td>{{ row.status and row.status.lastSyncedAt ? row.status.lastSyncedAt|timestamp('short') : 'Never'|t('mybooks') }}</td>
+                </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+{% endif %}
+
+<p class="light">{{ '{count, plural, =0{No covers} =1{One cover} other{# covers}} stored locally.'|t('mybooks', { count: coverCount }) }}</p>
+
+<form method="post" accept-charset="UTF-8">
+    {{ csrfInput() }}
+    {{ actionInput('mybooks/utility/sync-all') }}
+    {{ redirectInput('utilities/mybooks') }}
+    <button type="submit" class="btn submit">{{ 'Sync all'|t('mybooks') }}</button>
+</form>
+
+<p class="light smalltext">
+    {{ 'A cron job keeps everything up to date:'|t('mybooks') }} <code>php craft mybooks/sync</code>
+</p>

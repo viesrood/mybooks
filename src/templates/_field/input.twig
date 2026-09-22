@@ -1,0 +1,94 @@
+{#
+ # Books field input. The whole value travels as one JSON string in the
+ # hidden input; field.js keeps it in sync with what the editor sees.
+ #}
+{% do view.registerAssetBundle('viesrood\\mybooks\\web\\assets\\field\\FieldAsset') %}
+{% set wrapperId = id ~ '-mybooks' %}
+
+<div id="{{ wrapperId }}" class="mybooks-field">
+    {{ hiddenInput(name, state|json_encode, { class: 'mybooks-field__state' }) }}
+
+    <fieldset class="mybooks-field__modes">
+        <legend class="visually-hidden">{{ 'Where do the books come from?'|t('mybooks') }}</legend>
+        <label>
+            <input type="radio" name="{{ id }}-mode" value="manual" {{ state.mode == 'manual' ? 'checked' }}>
+            {{ 'Pick books myself'|t('mybooks') }}
+        </label>
+        <label>
+            <input type="radio" name="{{ id }}-mode" value="openlibrary" {{ state.mode == 'openlibrary' ? 'checked' }}>
+            {{ 'Link an Open Library account'|t('mybooks') }}
+        </label>
+    </fieldset>
+
+    <div class="mybooks-field__panel" data-mode="manual">
+        <ul class="mybooks-field__list" role="list"></ul>
+        <p class="mybooks-field__empty light">{{ 'No books yet. Search for a book below.'|t('mybooks') }}</p>
+
+        <div class="mybooks-field__search">
+            <label class="visually-hidden" for="{{ id }}-search">{{ 'Search for a book'|t('mybooks') }}</label>
+            <div class="flex">
+                <input type="search" id="{{ id }}-search" class="text fullwidth mybooks-field__query" placeholder="{{ 'Title, author or ISBN'|t('mybooks') }}" autocomplete="off">
+                <button type="button" class="btn mybooks-field__search-btn">{{ 'Search'|t('mybooks') }}</button>
+                <button type="button" class="btn mybooks-field__add-manual">{{ 'Add without searching'|t('mybooks') }}</button>
+            </div>
+            <p class="mybooks-field__search-status smalltext light" role="status" aria-live="polite"></p>
+            <ul class="mybooks-field__results" role="list"></ul>
+        </div>
+    </div>
+
+    <div class="mybooks-field__panel" data-mode="openlibrary">
+        <div class="field">
+            <div class="heading"><label for="{{ id }}-account">{{ 'Open Library username'|t('mybooks') }}</label></div>
+            <div class="instructions"><p>{{ 'As in openlibrary.org/people/username; a pasted profile link works too. The reading log has to be public (Settings → Privacy on Open Library).'|t('mybooks') }}</p></div>
+            <input type="text" id="{{ id }}-account" class="text code mybooks-field__account" value="{{ state.account }}" autocomplete="off" autocapitalize="off" spellcheck="false">
+        </div>
+
+        <div class="field">
+            <div class="heading"><span class="label">{{ 'Show these shelves'|t('mybooks') }}</span></div>
+            {% for option in shelfOptions %}
+                <div>
+                    <input type="checkbox" class="checkbox mybooks-field__shelf" id="{{ id }}-shelf-{{ option.value }}" value="{{ option.value }}" {{ option.value in state.shelves ? 'checked' }}>
+                    <label for="{{ id }}-shelf-{{ option.value }}">{{ option.label }}</label>
+                </div>
+            {% endfor %}
+        </div>
+
+        <div class="flex">
+            <button type="button" class="btn mybooks-field__test">{{ 'Test connection'|t('mybooks') }}</button>
+            {% if library.isLinked() %}
+                <button type="button" class="btn mybooks-field__sync">{{ 'Sync now'|t('mybooks') }}</button>
+            {% endif %}
+        </div>
+        <p class="mybooks-field__account-status smalltext" role="status" aria-live="polite">
+            {%- if status and status.lastError -%}
+                <span class="error">{{ status.lastError }}</span>
+            {%- elseif status and status.lastSyncedAt -%}
+                {{ 'Last synced {date}: {count, plural, =0{no books} =1{one book} other{# books}} on the chosen shelves.'|t('mybooks', { date: status.lastSyncedAt|timestamp('short'), count: syncedCount }) }}
+            {%- elseif library.isLinked() -%}
+                {{ 'Not synced yet. That happens right after saving.'|t('mybooks') }}
+            {%- endif -%}
+        </p>
+    </div>
+</div>
+
+{% js %}
+new Craft.MyBooksField({{ ('#' ~ wrapperId|namespaceInputId)|json_encode|raw }}, {{ {
+    thumbs: thumbs,
+    shelves: shelfOptions,
+    text: {
+        title: 'Title'|t('mybooks'),
+        authors: 'Authors, separated by commas'|t('mybooks'),
+        shelf: 'Shelf'|t('mybooks'),
+        progress: 'Progress'|t('mybooks'),
+        remove: 'Remove'|t('mybooks'),
+        reorder: 'Reorder'|t('mybooks'),
+        add: 'Add'|t('mybooks'),
+        added: 'Added'|t('mybooks'),
+        searching: 'Searching Open Library…'|t('mybooks'),
+        noResults: 'Nothing found. Try other words, or add the book without searching.'|t('mybooks'),
+        results: '{count, plural, =1{One result} other{# results}}'|t('mybooks'),
+        newBook: 'New book'|t('mybooks'),
+        error: 'Something went wrong. Try again.'|t('mybooks'),
+    },
+}|json_encode|raw }});
+{% endjs %}

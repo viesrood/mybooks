@@ -1,14 +1,6 @@
 {% import '_includes/forms.twig' as forms %}
 
 {{ forms.selectField({
-    label: 'Reader'|t('mybooks'),
-    id: 'reader',
-    name: 'reader',
-    options: readerOptions,
-    value: widget.reader ?? '',
-}) }}
-
-{{ forms.selectField({
     label: 'Shelf'|t('mybooks'),
     id: 'shelf',
     name: 'shelf',
@@ -17,7 +9,7 @@
 }) }}
 
 {{ forms.textField({
-    label: 'Books per reader'|t('mybooks'),
+    label: 'Books per person'|t('mybooks'),
     id: 'limit',
     name: 'limit',
     type: 'number',

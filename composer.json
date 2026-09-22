@@ -1,6 +1,6 @@
 {
     "name": "viesrood/mybooks",
-    "description": "Show what your team is reading in Craft CMS 5: Open Library, Hardcover or hand-entered shelves, synced in the background, with a reader field, a dashboard widget and dependency-free Twig markup.",
+    "description": "A Books field for Craft CMS 5: pick books from Open Library or link an Open Library account, synced in the background, with locally stored covers and dependency-free Twig markup.",
     "type": "craft-plugin",
     "license": "MIT",
     "keywords": [
@@ -10,8 +10,8 @@
         "books",
         "reading",
         "open-library",
-        "hardcover",
-        "currently-reading"
+        "currently-reading",
+        "field"
     ],
     "support": {
         "docs": "https://github.com/viesrood/mybooks/blob/main/README.md",

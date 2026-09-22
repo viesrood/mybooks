@@ -1,0 +1,81 @@
+.mybooks-field__modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+}
+.mybooks-field__modes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.mybooks-field__list,
+.mybooks-field__results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.mybooks-field__book,
+.mybooks-field__result {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--hairline-color);
+}
+.mybooks-field__book {
+  grid-template-columns: auto 40px minmax(0, 1fr) auto auto;
+}
+.mybooks-field__result {
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+}
+.mybooks-field__fields {
+  display: grid;
+  gap: 4px;
+}
+.mybooks-field__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.mybooks-field__progress {
+  width: 5em;
+}
+.mybooks-field__thumb {
+  display: block;
+  width: 40px;
+  max-width: none;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 3px;
+  background: var(--gray-100);
+}
+.mybooks-field__result-title {
+  font-weight: 600;
+}
+.mybooks-field__search {
+  margin-top: 16px;
+}
+.mybooks-field__search .flex {
+  flex-wrap: nowrap;
+}
+.mybooks-field__search-status {
+  margin: 8px 0 0;
+}
+.mybooks-field__account {
+  width: 100%;
+  max-width: 24em;
+}
+.mybooks-field__account-status {
+  margin-top: 8px;
+}
+@media (max-width: 700px) {
+  .mybooks-field__book {
+    grid-template-columns: auto 40px minmax(0, 1fr) auto;
+  }
+  .mybooks-field__meta {
+    grid-column: 3 / 4;
+  }
+}

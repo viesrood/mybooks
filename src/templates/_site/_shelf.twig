@@ -2,10 +2,9 @@
  # My Books: default markup for one shelf.
  #
  # Override: copy this file to templates/mybooks/_shelf.twig in your site.
- # Variables: reader, shelf, books, heading, headingLevel, showProgress, transform
+ # Variables: shelf, books, heading, headingLevel, label, showProgress,
+ # transform, listId
  #}
-{% set listId = 'mybooks-' ~ reader.handle ~ '-' ~ shelf.value %}
-{% set label = heading ?: (reader.name ~ ': ' ~ shelf.label) %}
 <section class="mybooks" {% if heading %}aria-labelledby="{{ listId }}-heading"{% else %}aria-label="{{ label }}"{% endif %}>
     {% if heading %}
         <h{{ headingLevel }} id="{{ listId }}-heading" class="mybooks__heading">{{ heading }}</h{{ headingLevel }}>
@@ -19,6 +18,7 @@
                     {# alt is empty on purpose: the title is right below the cover. #}
                     <img class="mybooks__cover" src="{{ src }}" alt="" loading="lazy" decoding="async" width="200" height="300">
                 {% else %}
+                    {# No local cover (yet): a placeholder, never a remote image. #}
                     <span class="mybooks__cover mybooks__cover--empty" aria-hidden="true">{{ book.title }}</span>
                 {% endif %}
                 <p class="mybooks__title">

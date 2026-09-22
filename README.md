@@ -1,32 +1,38 @@
 # My Books for Craft CMS
 
-Show what people are reading. Every reader gets an account at Open Library or
-Hardcover, or has books entered by hand. Their shelves (want to read, currently
-reading, read) are copied into Craft in the background, and templates show them
-with a Reader field, Twig helpers or ready-made markup.
+A **Books** field that shows what someone is reading. Add it to an entry type
+(a team member, an author, a user) and editors choose, per entry:
+
+- **Pick books myself**: search Open Library by title, author or ISBN, click a
+  result, and title, authors and cover are filled in. Set the shelf (want to
+  read, currently reading, read) and progress. Books that Open Library does not
+  know can be added without searching.
+- **Link an Open Library account**: fill in a username and pick the shelves to
+  show. The shelves are synced in the background.
 
 Three things shape the design:
 
-1. **Book data is a cache.** Shelves are synced by cron, the queue or a button.
-   Rendering a page never calls a book service, so a slow or broken service can
-   never slow down or break your site. A failed sync keeps the last good books.
-2. **Covers are stored locally.** Covers are downloaded into a Craft volume
-   once, so visitors never contact a third party (no IP address leaves your
-   site), and covers work with image transforms and ImgixKit.
-3. **Readers are configuration.** They live in project config, so they deploy
-   like sections do. API tokens are always environment variables and never end
-   up in `project.yaml`.
+1. **A page never talks to Open Library.** Hand-picked books live in the field
+   value (with drafts and revisions like any content); synced books live in the
+   plugin's own table, refreshed by cron or the queue. A slow or broken Open
+   Library can never slow down or break your site, and a failed sync keeps the
+   last good books.
+2. **Covers are stored locally.** Each cover is downloaded once into a Craft
+   volume, so no visitor's browser contacts a third party, and covers work with
+   image transforms and ImgixKit. Until a cover is stored, templates get a
+   placeholder, never a remote image.
+3. **Content, not configuration.** Everything is edited on the entry, by
+   whoever can edit the entry, on any environment. There are no API tokens.
 
 ## Contents
 
 - [Requirements](#requirements)
 - [Installation](#installation)
-- [Readers and book services](#readers-and-book-services)
+- [The field](#the-field)
 - [Settings](#settings)
 - [Syncing](#syncing)
 - [Templates](#templates)
-- [The Reader field](#the-reader-field)
-- [Dashboard widget](#dashboard-widget)
+- [Utility and dashboard widget](#utility-and-dashboard-widget)
 - [Events](#events)
 - [Security and privacy](#security-and-privacy)
 - [License](#license)
@@ -42,43 +48,25 @@ composer require viesrood/mybooks
 php craft plugin/install mybooks
 ```
 
-Then choose a cover volume under **Settings → Plugins → My Books**, and add
-readers under **My Books** in the main navigation.
+Then choose a cover volume under **Settings → Plugins → My Books**, create a
+**Books** field and add it to a field layout.
 
-## Readers and book services
+## The field
 
-A reader is one person with one account at one book service. Readers are
-created by admins, and only where `allowAdminChanges` is on (they are project
-config). On production, create them locally and deploy.
+**Pick books myself.** Type in the search box and press Enter. Results come
+from Open Library's search (up to eight; an ISBN searches on ISBN only). Added
+books can be renamed, reordered by dragging, moved to another shelf and given
+a progress percentage. Their covers are stored in the background after the
+entry is saved.
 
-### Open Library
+**Link an Open Library account.** Fill in the username, as in
+`openlibrary.org/people/username` (a pasted profile link works too). The
+reading log must be public: on Open Library, go to **Settings → Privacy** and
+turn on the public reading log. **Test connection** checks it before saving.
+The account is synced right after the entry is saved, and then by cron.
 
-No key needed. Fill in the username (as in `openlibrary.org/people/username`;
-a pasted profile URL works too). The reader has to make their reading log
-public: on Open Library, go to **Settings → Privacy** and turn on the public
-reading log. A private log gives a clear error in the control panel.
-
-### Hardcover
-
-1. On hardcover.app, open **Account → Hardcover API** and create a token with
-   read access to the library.
-2. Put it in `.env`: `HARDCOVER_TOKEN_JANE="..."` (with or without `Bearer `).
-3. Fill in `$HARDCOVER_TOKEN_JANE` as the reader's API token. A token pasted
-   directly is refused, because reader settings are stored in project config.
-
-All shelves come back in one request per sync, well within Hardcover's rate
-limits. Hardcover's terms allow a public website to show a user's data on
-behalf of that user, which is what a reader with their own token is. Covers on
-Hardcover are uploaded by users, so keep a takedown policy on your site.
-
-### Entered by hand
-
-No service at all. Add books under **My Books → the reader → New book**. Fill in
-an ISBN and click **Look up** to take the title, authors and cover from Open
-Library. The lookup only prefills the form; nothing is saved until you save.
-
-**Test connection** on the reader screen checks the settings in the form
-without saving them.
+The account is remembered in both modes, so switching back and forth loses
+nothing; only the chosen mode is shown on the site.
 
 ## Settings
 
@@ -90,133 +78,105 @@ Every setting can also be set per environment in `config/mybooks.php`:
 return [
     'coverVolume' => '4b8c...',        // volume UID; null = link covers remotely
     'coverSubpath' => 'mybooks',       // folder inside the volume
-    'maxBooksPerShelf' => 50,
-    'maxCoverDownloadsPerSync' => 40,  // per reader per run; the rest follows next run
-    'timeout' => 10,                   // seconds per request
+    'maxBooksPerShelf' => 50,          // per shelf of a linked account
+    'maxCoverDownloadsPerSync' => 40,  // per account per run; the rest follows next run
+    'timeout' => 10,                   // seconds per request to Open Library
 ];
 ```
 
-Without a cover volume, covers are linked straight from the book service. It
-works, but every visitor's browser then requests images from a third party. The
-control panel warns about this.
+Without a cover volume, covers are linked straight from Open Library. It works,
+but every visitor's browser then requests images from a third party.
 
 ## Syncing
 
-A sync runs:
-
-- in the queue, right after a reader is saved;
-- from **Sync now** / **Sync all** in the control panel (synchronous, so you see
-  errors immediately);
-- from the console, meant for cron:
-
 ```bash
-php craft mybooks/sync                  # every reader
-php craft mybooks/sync --reader=jane    # one reader
-php craft mybooks/sync --verbose        # also report readers without changes
+php craft mybooks/sync                     # everything
+php craft mybooks/sync --account=jane_doe  # one account, no clean-up
+php craft mybooks/sync --verbose           # also report accounts without changes
 ```
 
 ```cron
 0 */3 * * * php /path/to/craft mybooks/sync >> /path/to/storage/logs/mybooks_cron.log 2>&1
 ```
 
-The command is silent when nothing changed, so a cron log only grows when
-something happened. It exits with a non-zero code when a book service failed.
+A full run:
 
-What a sync does:
+- finds the linked accounts by reading the Books fields themselves (drafts and
+  revisions do not count), so there is nothing to register or keep in sync;
+- fetches only the shelves some field shows, and writes only what changed;
+- removes books that left a shelf, but keeps the books of a shelf that failed
+  to load;
+- stores missing covers, most visible shelf first;
+- removes accounts no field links to any more, and covers nothing uses.
 
-- books are only written when something about them changed;
-- books that left a shelf are removed, but a shelf that failed to load keeps its
-  books;
-- a book whose cover changed at the service gets the new cover, and the old
-  downloaded cover is deleted;
-- errors are kept per reader and shown in the control panel.
+It prints nothing when nothing changed, and exits with code 69 when Open
+Library failed for an account.
 
 ## Templates
 
-Everything below reads the local database only.
-
 ```twig
-{# A reader by handle (or uid or id) #}
-{% set reader = craft.mybooks.reader('jane') %}
+{% set books = entry.books %}  {# the field handle #}
 
-{% for book in reader.shelf('reading', 3) ?? [] %}
-    {% set cover = book.cover %}  {# Asset|null #}
-    <img src="{{ cover ? cover.getUrl({ width: 300 }) : book.coverUrl }}" alt="">
+{% for book in books.shelf('reading', 4) %}
+    {% if book.cover %}
+        <img src="{{ book.cover.getUrl({ width: 300 }) }}" alt="">
+    {% endif %}
     <h3>{{ book.title }}</h3>
     <p>{{ book.getAuthorsString(', ', ' & ') }}</p>
     {% if book.progress is not null %}
         <progress max="100" value="{{ book.progress }}" aria-label="{{ book.progress }}% read"></progress>
     {% endif %}
 {% endfor %}
-
-{# Or with criteria #}
-{% set books = craft.mybooks.books({ reader: 'jane', shelf: 'read', limit: 5 }) %}
 ```
 
-Shelves are `want`, `reading` and `read`. The names Open Library uses
+Shelves are `want`, `reading` and `read`; the names Open Library uses
 (`want-to-read`, `currently-reading`, `already-read`) work too. An unknown shelf
 returns an empty list instead of an error.
 
+| Field value | |
+|---|---|
+| `shelf(shelf, limit)` | books on one shelf |
+| `books` | every book shown |
+| `count(shelf)`, `hasBooks(shelf)` | |
+| `isLinked()`, `account`, `mode` | |
+| `accountStatus` | `lastSyncedAt` and `lastError` of the linked account |
+
 | Book | |
 |---|---|
-| `title`, `subtitle` | strings |
-| `authors`, `authorsString`, `getAuthorsString(glue, lastGlue)` | author names |
-| `cover` | the local `Asset`, or `null` |
-| `coverSrc`, `getCoverSrc(transform)` | the local asset URL, otherwise the remote cover |
-| `coverUrl` | the cover at the book service |
-| `url` | the book's page at the service |
+| `title`, `subtitle`, `authors`, `authorsString` | |
+| `cover` | the local `Asset`, or `null` while it is not stored yet |
+| `coverSrc`, `getCoverSrc(transform)` | the local URL; remote only without a cover volume |
+| `url` | the book's page at Open Library |
 | `progress` | 0 to 100, only on `reading` |
-| `rating` | 0.5 to 5, or `null` |
-| `startedDate`, `finishedDate`, `addedDate` | `DateTime` or `null` |
-| `shelf`, `shelfLabel` | the `Shelf` enum and its translated label |
-
-| Reader | |
-|---|---|
-| `name`, `handle` | |
-| `shelf(shelf, limit)` | books on one shelf |
-| `books` | every book, grouped by shelf |
-| `count(shelf)`, `hasBooks(shelf)` | |
-| `lastSyncedAt`, `lastError` | sync status |
+| `rating`, `startedDate`, `finishedDate`, `addedDate` | |
+| `shelf`, `shelfLabel`, `isManual()` | |
 
 ### Ready-made markup
 
 ```twig
-{{ craft.mybooks.render('jane', {
+{{ craft.mybooks.render(entry.books, {
     shelf: 'reading',
     limit: 5,
     heading: 'What I am reading',
-    headingLevel: 2,
     transform: { width: 300 },
-    registerCss: true,
 }) }}
 ```
 
 A horizontally scrolling list with CSS scroll-snap: no JavaScript, no jQuery,
-nothing from a CDN. The list is keyboard-focusable, covers are lazy-loaded, and
-it renders nothing when the shelf is empty. The CSS is scoped to `.mybooks` and
-can be restyled through custom properties (`--mybooks-cover-width`,
-`--mybooks-gap`, ...), or left out with `registerCss: false`.
+nothing from a CDN. Keyboard-focusable, lazy-loaded covers, and nothing at all
+when the shelf is empty. Restyle it through custom properties
+(`--mybooks-cover-width`, `--mybooks-gap`, ...), leave the CSS out with
+`registerCss: false`, or copy `src/templates/_site/_shelf.twig` to
+`templates/mybooks/_shelf.twig` to change the markup.
 
-To change the markup, copy `src/templates/_site/_shelf.twig` to
-`templates/mybooks/_shelf.twig` in your site.
+`craft.mybooks.libraries()` returns every non-empty Books field value on the
+site, for a "what the team is reading" overview.
 
-## The Reader field
+## Utility and dashboard widget
 
-Add a **Reader (My Books)** field to, for example, a team member's entry type:
-
-```twig
-{% set reader = entry.reader %}
-{% if reader and reader.hasBooks('reading') %}
-    ...
-{% endif %}
-```
-
-The field stores the reader's UID, so it points at the same reader on every
-environment. A deleted reader reads as `null`.
-
-## Dashboard widget
-
-**Reading** shows the covers on one shelf, for one reader or for everyone.
+**Utilities → My Books** lists the linked accounts, which entries use them,
+the last sync and any error, the number of stored covers, and a **Sync all**
+button. The **Reading** dashboard widget shows one shelf for everyone.
 
 ## Events
 
@@ -227,34 +187,30 @@ use yii\base\Event;
 
 // Clear a static page cache, but only when a sync changed something.
 Event::on(SyncService::class, SyncService::EVENT_AFTER_SYNC, function (SyncEvent $event) {
-    if ($event->changed) {
-        // $event->reader->handle ...
+    if (!$event->changed) {
+        return;
+    }
+
+    foreach ($event->elements as $element) {
+        // $element['id'], $element['siteId'], $element['uri']
     }
 });
 ```
 
-Register your own book service by implementing
-`viesrood\mybooks\base\ProviderInterface` (or extending `base\Provider`):
-
-```php
-use craft\events\RegisterComponentTypesEvent;
-use viesrood\mybooks\services\ProvidersService;
-
-Event::on(ProvidersService::class, ProvidersService::EVENT_REGISTER_PROVIDERS,
-    fn(RegisterComponentTypesEvent $e) => $e->types[] = MyProvider::class);
-```
+Hand-picked books change through an entry save, which your cache already
+handles.
 
 ## Security and privacy
 
-- Rendering never contacts a book service; only the sync does, from the server.
-- Remote URLs are only stored when they are `http(s)`, so a remote value can
-  never become a `javascript:` link.
+- Rendering never contacts Open Library; only the sync and the field's search
+  do, from the server.
+- Everything posted by the field is sanitised again on the server: only
+  `http(s)` URLs survive, ids and work ids are checked, text is trimmed.
 - Cover downloads refuse URLs that resolve to private or reserved addresses,
-  also after redirects, check the actual bytes (JPEG, PNG, WebP or GIF only,
-  5 MB max), and skip Open Library's 1-pixel placeholder.
-- API tokens are environment variables only.
-- Reader settings are admin-only. Hand-entered books and syncs need the
-  **Manage hand-entered books and start syncs** permission.
+  also after redirects, check the actual bytes (JPEG, PNG, WebP or GIF, 5 MB
+  max), and skip Open Library's one-pixel placeholder.
+- The field's actions need a logged-in control panel user; "Sync now" only
+  works for accounts a field already links to.
 
 ## License
 

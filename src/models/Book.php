@@ -8,6 +8,7 @@ use Craft;
 use craft\base\Model;
 use craft\elements\Asset;
 use craft\helpers\Json;
+use craft\helpers\StringHelper;
 use DateTime;
 use DateTimeZone;
 use viesrood\mybooks\enums\Shelf;
@@ -15,22 +16,25 @@ use viesrood\mybooks\Plugin;
 use viesrood\mybooks\records\BookRecord;
 
 /**
- * A book on one of a reader's shelves.
+ * One book, hand-picked in a Books field or synced from a linked account.
+ * Both kinds look the same to a template:
  *
- * In Twig: book.title, book.authorsString, book.cover (Asset|null),
- * book.coverSrc, book.progress, book.rating, book.startedDate, ...
+ * book.title, book.authorsString, book.cover (Asset|null), book.coverSrc,
+ * book.progress, book.rating, book.startedDate, book.finishedDate, book.url
  */
 class Book extends Model
 {
-    public ?int $id = null;
+    public const SOURCE_MANUAL = 'manual';
 
-    public ?string $uid = null;
+    public const SOURCE_OPENLIBRARY = 'openlibrary';
 
-    public ?int $readerId = null;
+    /** A UUID for hand-picked books, the row id for synced ones. */
+    public ?string $id = null;
 
-    public string $provider = '';
+    public string $source = self::SOURCE_MANUAL;
 
-    public string $externalId = '';
+    /** Open Library work id ("OL45804W"), if known. */
+    public ?string $workId = null;
 
     public string $title = '';
 
@@ -45,10 +49,6 @@ class Book extends Model
 
     public ?string $coverUrl = null;
 
-    public ?int $coverAssetId = null;
-
-    public ?string $coverSourceUrl = null;
-
     public ?int $progress = null;
 
     public ?float $rating = null;
@@ -61,10 +61,6 @@ class Book extends Model
 
     /** Y-m-d */
     public ?string $addedAt = null;
-
-    public int $sortOrder = 0;
-
-    public ?string $hash = null;
 
     private Shelf $shelf = Shelf::Reading;
 
@@ -111,30 +107,23 @@ class Book extends Model
         return implode($glue, $authors) . $lastGlue . $last;
     }
 
-    public function getReader(): ?Reader
-    {
-        return $this->readerId !== null
-            ? Plugin::getInstance()?->getReaders()->getReaderById($this->readerId)
-            : null;
-    }
-
     /**
-     * The locally stored cover, if there is one. Use this with image
-     * transforms (or ImgixKit); it never touches the book service.
+     * The local copy of the cover, once the plugin has stored it. Use this
+     * with image transforms or ImgixKit; it never touches Open Library.
      */
     public function getCover(): ?Asset
     {
         if ($this->cover === null) {
-            $this->cover = $this->coverAssetId !== null
-                ? (Asset::find()->id($this->coverAssetId)->status(null)->one() ?? false)
-                : false;
+            $this->cover = ($this->coverUrl !== null
+                ? Plugin::getInstance()?->getCovers()->assetFor($this->coverUrl)
+                : null) ?? false;
         }
 
         return $this->cover ?: null;
     }
 
     /**
-     * Pre-load the cover asset (used for eager loading a whole shelf).
+     * Used by eager loading, so a whole shelf costs one query.
      */
     public function setCover(?Asset $asset): void
     {
@@ -142,9 +131,12 @@ class Book extends Model
     }
 
     /**
-     * A URL for an <img>: the local asset when there is one, otherwise the
-     * cover at the book service (which means the visitor's browser contacts
-     * that service; configure a cover volume to prevent that).
+     * A URL for an <img>, or null.
+     *
+     * With a cover volume configured this is only ever the local copy: a
+     * cover that has not been stored yet gives null (show a placeholder)
+     * rather than a link to Open Library, so no visitor's browser contacts a
+     * third party. Without a cover volume the remote cover is returned.
      *
      * @param mixed $transform Passed on to Asset::getUrl().
      */
@@ -156,12 +148,9 @@ class Book extends Model
             return $asset->getUrl($transform);
         }
 
-        return $this->coverUrl;
-    }
+        $covers = Plugin::getInstance()?->getCovers();
 
-    public function hasCover(): bool
-    {
-        return $this->getCover() !== null || $this->coverUrl !== null;
+        return $covers !== null && $covers->isEnabled() ? null : $this->coverUrl;
     }
 
     public function getStartedDate(): ?DateTime
@@ -181,7 +170,66 @@ class Book extends Model
 
     public function isManual(): bool
     {
-        return $this->provider === \viesrood\mybooks\providers\Manual::handle();
+        return $this->source === self::SOURCE_MANUAL;
+    }
+
+    /**
+     * A hand-picked book from the stored field JSON (or from the form).
+     * Everything is sanitised again, because field values can be posted by
+     * anyone who can edit the element.
+     *
+     * @param array<mixed> $data
+     */
+    public static function fromFieldData(array $data): self
+    {
+        $book = new self();
+        $id = is_string($data['id'] ?? null) && preg_match('/^[a-f0-9\-]{36}$/', $data['id']) === 1
+            ? $data['id']
+            : StringHelper::UUID();
+        $workId = is_string($data['workId'] ?? null) && preg_match('/^OL\d+W$/', $data['workId']) === 1
+            ? $data['workId']
+            : null;
+
+        $book->id = $id;
+        $book->source = self::SOURCE_MANUAL;
+        $book->workId = $workId;
+        $book->title = BookData::text($data['title'] ?? null) ?? '';
+        $book->subtitle = BookData::text($data['subtitle'] ?? null);
+        $book->authors = BookData::authors($data['authors'] ?? []);
+        $book->isbn = BookData::isbn($data['isbn'] ?? null);
+        $book->url = BookData::httpUrl($data['url'] ?? null);
+        $book->coverUrl = BookData::httpUrl($data['coverUrl'] ?? null);
+        $book->setShelf($data['shelf'] ?? null);
+        $book->progress = $book->getShelf() === Shelf::Reading ? BookData::progress($data['progress'] ?? null) : null;
+        $book->rating = BookData::rating($data['rating'] ?? null);
+        $book->startedAt = BookData::date($data['startedAt'] ?? null);
+        $book->finishedAt = BookData::date($data['finishedAt'] ?? null);
+
+        return $book;
+    }
+
+    /**
+     * What a hand-picked book stores in the field value.
+     *
+     * @return array<string, mixed>
+     */
+    public function toFieldData(): array
+    {
+        return [
+            'id' => $this->id,
+            'shelf' => $this->shelf->value,
+            'title' => $this->title,
+            'subtitle' => $this->subtitle,
+            'authors' => $this->authors,
+            'isbn' => $this->isbn,
+            'workId' => $this->workId,
+            'url' => $this->url,
+            'coverUrl' => $this->coverUrl,
+            'progress' => $this->progress,
+            'rating' => $this->rating,
+            'startedAt' => $this->startedAt,
+            'finishedAt' => $this->finishedAt,
+        ];
     }
 
     public static function fromRecord(BookRecord $record): self
@@ -189,26 +237,20 @@ class Book extends Model
         $authors = $record->authors !== null ? Json::decodeIfJson($record->authors) : [];
 
         $book = new self([
-            'id' => (int)$record->id,
-            'uid' => $record->uid,
-            'readerId' => (int)$record->readerId,
-            'provider' => $record->provider,
-            'externalId' => $record->externalId,
+            'id' => (string)$record->id,
+            'source' => self::SOURCE_OPENLIBRARY,
+            'workId' => $record->externalId,
             'title' => $record->title,
             'subtitle' => $record->subtitle,
             'authors' => is_array($authors) ? array_values(array_filter($authors, 'is_string')) : [],
             'isbn' => $record->isbn,
             'url' => $record->url,
             'coverUrl' => $record->coverUrl,
-            'coverAssetId' => $record->coverAssetId !== null ? (int)$record->coverAssetId : null,
-            'coverSourceUrl' => $record->coverSourceUrl,
             'progress' => $record->progress !== null ? (int)$record->progress : null,
             'rating' => $record->rating !== null ? (float)$record->rating : null,
             'startedAt' => $record->startedAt,
             'finishedAt' => $record->finishedAt,
             'addedAt' => $record->addedAt,
-            'sortOrder' => (int)$record->sortOrder,
-            'hash' => $record->hash,
         ]);
 
         $book->setShelf($record->shelf);
@@ -222,35 +264,12 @@ class Book extends Model
     protected function defineRules(): array
     {
         return [
-            [['title', 'subtitle', 'isbn', 'url'], 'trim'],
             [['title'], 'required'],
             [['title', 'subtitle'], 'string', 'max' => 255],
-            [['url'], 'url', 'defaultScheme' => 'https'],
-            [['url'], 'string', 'max' => 2000],
-            [['isbn'], 'validateIsbn'],
             [['progress'], 'integer', 'min' => 0, 'max' => 100],
             [['rating'], 'number', 'min' => 0, 'max' => 5],
             [['finishedAt'], 'validateDates'],
         ];
-    }
-
-    public function validateIsbn(string $attribute): void
-    {
-        if ($this->isbn === null || $this->isbn === '') {
-            $this->isbn = null;
-
-            return;
-        }
-
-        $isbn = BookData::isbn($this->isbn);
-
-        if ($isbn === null) {
-            $this->addError($attribute, Craft::t('mybooks', 'An ISBN has 10 or 13 digits.'));
-
-            return;
-        }
-
-        $this->isbn = $isbn;
     }
 
     public function validateDates(string $attribute): void
@@ -267,7 +286,8 @@ class Book extends Model
         }
 
         // Midnight in the site's timezone, so |date filters show the same day.
-        $date = DateTime::createFromFormat('!Y-m-d', substr($value, 0, 10), new DateTimeZone(Craft::$app->getTimeZone()));
+        $timezone = Craft::$app !== null ? Craft::$app->getTimeZone() : date_default_timezone_get();
+        $date = DateTime::createFromFormat('!Y-m-d', substr($value, 0, 10), new DateTimeZone($timezone));
 
         return $date ?: null;
     }

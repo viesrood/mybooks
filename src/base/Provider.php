@@ -11,14 +11,17 @@ use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\Exception\RequestException;
 use viesrood\mybooks\enums\Shelf;
 use viesrood\mybooks\models\BookData;
-use viesrood\mybooks\models\Reader;
 use viesrood\mybooks\Plugin;
 
 /**
- * Shared plumbing: an HTTP client with a hard timeout, JSON decoding, and a
- * default fetchShelves() that fetches shelf by shelf.
+ * Shared plumbing for a book service: an HTTP client with a hard timeout,
+ * JSON decoding, and fetchShelves() that fetches shelf by shelf and reports
+ * failures per shelf.
+ *
+ * Only ever called from the sync, the field's search and the connection
+ * test, never while rendering a page.
  */
-abstract class Provider implements ProviderInterface
+abstract class Provider
 {
     private ?ClientInterface $client;
 
@@ -31,40 +34,36 @@ abstract class Provider implements ProviderInterface
         $this->client = $client;
     }
 
-    public function supportsSync(): bool
-    {
-        return true;
-    }
-
-    public function requiresAccount(): bool
-    {
-        return false;
-    }
-
-    public function requiresToken(): bool
-    {
-        return false;
-    }
+    abstract public static function displayName(): string;
 
     /**
-     * Fetches one shelf. Override this, or fetchShelves() when the service can
-     * return several shelves in one request.
+     * Fetches one shelf of an account.
      *
      * @return BookData[]
      * @throws ProviderException
      */
-    protected function fetchShelf(Reader $reader, Shelf $shelf, int $limit): array
-    {
-        return [];
-    }
+    abstract protected function fetchShelf(string $account, Shelf $shelf, int $limit): array;
 
-    public function fetchShelves(Reader $reader, array $shelves, int $limit): FetchResult
+    /**
+     * Checks an account and returns a short success message.
+     *
+     * @throws ProviderException
+     */
+    abstract public function testConnection(string $account): string;
+
+    /**
+     * Fetches the given shelves. A failing shelf ends up in the result's
+     * errors instead of throwing, so the other shelves still load.
+     *
+     * @param Shelf[] $shelves
+     */
+    public function fetchShelves(string $account, array $shelves, int $limit): FetchResult
     {
         $result = new FetchResult();
 
         foreach ($shelves as $shelf) {
             try {
-                $result->setBooks($shelf, $this->fetchShelf($reader, $shelf, $limit));
+                $result->setBooks($shelf, $this->fetchShelf($account, $shelf, $limit));
             } catch (ProviderException $e) {
                 $result->setError($shelf, $e->getMessage());
             }

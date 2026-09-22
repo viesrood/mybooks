@@ -7,9 +7,11 @@ namespace viesrood\mybooks\records;
 use craft\db\ActiveRecord;
 
 /**
+ * A book synced from a linked account. Hand-picked books live in the field
+ * value itself, not here.
+ *
  * @property int $id
- * @property int $readerId
- * @property string $provider
+ * @property int $accountId
  * @property string $externalId
  * @property string $shelf
  * @property string $title
@@ -18,8 +20,6 @@ use craft\db\ActiveRecord;
  * @property string|null $isbn
  * @property string|null $url
  * @property string|null $coverUrl
- * @property int|null $coverAssetId
- * @property string|null $coverSourceUrl
  * @property int|null $progress
  * @property float|null $rating
  * @property string|null $startedAt

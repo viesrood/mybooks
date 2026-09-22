@@ -6,13 +6,13 @@
     {% endif %}
 {% endmacro %}
 
-<p>{{ 'Every setting below can also be set per environment in config/mybooks.php. Readers are managed under My Books in the main navigation.'|t('mybooks') }}</p>
+<p>{{ 'Every setting below can also be set per environment in config/mybooks.php. Books are added with a Books field; linked accounts are listed under Utilities → My Books.'|t('mybooks') }}</p>
 
 <h2>{{ 'Covers'|t('mybooks') }}</h2>
 
 {{ forms.selectField({
     label: 'Cover volume'|t('mybooks'),
-    instructions: 'Where downloaded covers are stored. Recommended: without a volume, covers are linked from the book service, so every visitor’s browser contacts that service.'|t('mybooks'),
+    instructions: 'Where downloaded covers are stored. Recommended: without a volume, covers are linked from Open Library, so every visitor’s browser contacts Open Library.'|t('mybooks'),
     id: 'coverVolume',
     name: 'coverVolume',
     options: volumeOptions,
@@ -34,7 +34,7 @@
 
 {{ forms.textField({
     label: 'Covers per sync'|t('mybooks'),
-    instructions: 'The most covers downloaded in one sync run per reader. A large library is completed over a few runs.'|t('mybooks'),
+    instructions: 'The most covers downloaded per account in one sync run. A large library is completed over a few runs.'|t('mybooks'),
     id: 'maxCoverDownloadsPerSync',
     name: 'maxCoverDownloadsPerSync',
     type: 'number',
@@ -50,7 +50,7 @@
 
 {{ forms.textField({
     label: 'Books per shelf'|t('mybooks'),
-    instructions: 'The most books kept per shelf per reader, newest first.'|t('mybooks'),
+    instructions: 'The most books kept per shelf of a linked account, newest first.'|t('mybooks'),
     id: 'maxBooksPerShelf',
     name: 'maxBooksPerShelf',
     type: 'number',
@@ -64,7 +64,7 @@
 
 {{ forms.textField({
     label: 'Timeout'|t('mybooks'),
-    instructions: 'Seconds before a request to a book service is given up.'|t('mybooks'),
+    instructions: 'Seconds before a request to Open Library is given up.'|t('mybooks'),
     id: 'timeout',
     name: 'timeout',
     type: 'number',
@@ -78,6 +78,6 @@
 }) }}
 
 <p class="light">
-    {{ 'Syncing runs in the background when a reader is saved, from the “Sync now” buttons, and from a cron job:'|t('mybooks') }}
+    {{ 'Linked accounts are synced right after an entry links them, from the “Sync now” buttons, and by a cron job:'|t('mybooks') }}
     <code>php craft mybooks/sync</code>
 </p>

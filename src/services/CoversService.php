@@ -15,18 +15,20 @@ use GuzzleHttp\Exception\ClientException;
 use Throwable;
 use viesrood\mybooks\models\Book;
 use viesrood\mybooks\Plugin;
-use viesrood\mybooks\records\BookRecord;
+use viesrood\mybooks\records\CoverRecord;
 use yii\base\Component;
 
 /**
- * Keeps a local copy of every cover in a Craft volume.
+ * Keeps a local copy of every cover in a Craft volume, keyed by the cover's
+ * source URL.
  *
- * Why: a cover linked straight from the book service makes every visitor's
- * browser contact that service (their IP address included) and breaks when
- * the service moves a file. A local asset also works with image transforms.
+ * Why: a cover linked straight from Open Library makes every visitor's
+ * browser contact Open Library (their IP address included). A local asset
+ * also works with image transforms and ImgixKit.
  *
- * A cover is downloaded once. It is fetched again only when the book service
- * reports a different cover URL, which is what coverSourceUrl tracks.
+ * The cache is independent of books: a hand-picked and a synced book with the
+ * same cover share one asset, and a URL that never gives a usable cover is
+ * remembered as rejected, so it is not fetched again.
  */
 class CoversService extends Component
 {
@@ -41,6 +43,9 @@ class CoversService extends Component
     ];
 
     private ?ClientInterface $client = null;
+
+    /** @var array<string, Asset|null> keyed by URL */
+    private array $assets = [];
 
     public function getVolume(): ?Volume
     {
@@ -58,51 +63,174 @@ class CoversService extends Component
         return $this->getVolume() !== null;
     }
 
+    public function assetFor(string $url): ?Asset
+    {
+        if (!array_key_exists($url, $this->assets)) {
+            $this->loadAssets([$url]);
+        }
+
+        return $this->assets[$url] ?? null;
+    }
+
     /**
-     * Downloads the cover of a book when it has none yet or the source URL
-     * changed. Returns true when the stored cover changed.
+     * Loads the covers of a list of books in two queries.
+     *
+     * @param Book[] $books
      */
-    public function downloadForBook(Book $book): bool
+    public function eagerLoad(array $books): void
+    {
+        $urls = array_values(array_unique(array_filter(array_map(
+            static fn(Book $book): ?string => $book->coverUrl,
+            $books,
+        ))));
+
+        $this->loadAssets(array_values(array_filter(
+            $urls,
+            fn(string $url): bool => !array_key_exists($url, $this->assets),
+        )));
+
+        foreach ($books as $book) {
+            $book->setCover($book->coverUrl !== null ? ($this->assets[$book->coverUrl] ?? null) : null);
+        }
+    }
+
+    /**
+     * Downloads covers that are not stored yet, at most $max per call.
+     *
+     * @param array<string, string|null> $urls Cover URL => book title (for a
+     *                                         readable filename).
+     * @return int The number of covers stored.
+     */
+    public function store(array $urls, int $max): int
     {
         $volume = $this->getVolume();
 
-        if ($volume === null || $book->id === null) {
-            return false;
+        if ($volume === null || $max <= 0 || $urls === []) {
+            return 0;
         }
 
-        if ($book->coverUrl === null) {
-            // The service dropped the cover: remove our copy too.
-            if ($book->coverAssetId !== null && $book->coverSourceUrl !== null) {
-                $this->deleteCover($book);
+        $known = CoverRecord::find()
+            ->select(['urlHash'])
+            ->where(['urlHash' => array_map([CoverRecord::class, 'hash'], array_keys($urls))])
+            ->andWhere(['or', ['status' => CoverRecord::STATUS_REJECTED], ['not', ['assetId' => null]]])
+            ->column();
+        $known = array_flip($known);
 
-                return true;
+        $stored = 0;
+        $attempts = 0;
+
+        foreach ($urls as $url => $title) {
+            if (isset($known[CoverRecord::hash($url)])) {
+                continue;
             }
 
-            return false;
+            if ($attempts++ >= $max) {
+                break;
+            }
+
+            if ($this->download($volume, $url, $title)) {
+                $stored++;
+            }
         }
 
-        // Already fetched, or already found unusable.
-        if ($book->coverSourceUrl === $book->coverUrl) {
-            return false;
+        return $stored;
+    }
+
+    /**
+     * Deletes stored covers (and their assets) that no book uses any more.
+     *
+     * @param string[] $inUse Every cover URL still referenced.
+     * @return int The number of covers removed.
+     */
+    public function collectGarbage(array $inUse): int
+    {
+        $keep = array_flip(array_map([CoverRecord::class, 'hash'], $inUse));
+        $removed = 0;
+
+        /** @var CoverRecord[] $records */
+        $records = CoverRecord::find()->all();
+
+        foreach ($records as $record) {
+            if (isset($keep[$record->urlHash])) {
+                continue;
+            }
+
+            if ($record->assetId !== null) {
+                $this->deleteAsset((int)$record->assetId);
+                $removed++;
+            }
+
+            Db::delete(CoverRecord::TABLE, ['id' => $record->id]);
         }
 
+        $this->assets = [];
+
+        return $removed;
+    }
+
+    public function countStored(): int
+    {
+        return (int)CoverRecord::find()->where(['not', ['assetId' => null]])->count();
+    }
+
+    /**
+     * @param string[] $urls
+     */
+    private function loadAssets(array $urls): void
+    {
+        if ($urls === []) {
+            return;
+        }
+
+        foreach ($urls as $url) {
+            $this->assets[$url] = null;
+        }
+
+        if (!Craft::$app->getDb()->tableExists(CoverRecord::TABLE)) {
+            return;
+        }
+
+        $rows = CoverRecord::find()
+            ->select(['url', 'assetId'])
+            ->where(['urlHash' => array_map([CoverRecord::class, 'hash'], $urls)])
+            ->andWhere(['not', ['assetId' => null]])
+            ->asArray()
+            ->all();
+
+        $assetIds = array_map(static fn(array $row): int => (int)$row['assetId'], $rows);
+
+        if ($assetIds === []) {
+            return;
+        }
+
+        $assets = [];
+
+        foreach (Asset::find()->id($assetIds)->status(null)->all() as $asset) {
+            $assets[(int)$asset->id] = $asset;
+        }
+
+        foreach ($rows as $row) {
+            $this->assets[(string)$row['url']] = $assets[(int)$row['assetId']] ?? null;
+        }
+    }
+
+    private function download(Volume $volume, string $url, ?string $title): bool
+    {
         $tempPath = Craft::$app->getPath()->getTempPath() . '/mybooks-' . StringHelper::randomString(12);
 
         try {
-            $extension = $this->fetch($book->coverUrl, $tempPath);
-            $asset = $this->saveAsset($volume, $book, $tempPath, $extension);
+            $extension = $this->fetch($url, $tempPath);
+            $asset = $this->saveAsset($volume, $url, $title, $tempPath, $extension);
         } catch (CoverRejectedException|ClientException $e) {
             // This URL will never give a usable cover (a placeholder, a 404,
-            // not an image). Remember that, so the next sync does not fetch
-            // it again; a different URL from the service is tried as usual.
-            Db::update(BookRecord::TABLE, ['coverSourceUrl' => $book->coverUrl], ['id' => $book->id]);
-            $book->coverSourceUrl = $book->coverUrl;
-            Craft::info(sprintf('No usable cover for “%s”: %s', $book->title, $e->getMessage()), 'mybooks');
+            // not an image). Remember that, so it is not fetched again.
+            $this->saveRecord($url, null, CoverRecord::STATUS_REJECTED);
+            Craft::info(sprintf('No usable cover at %s: %s', $url, $e->getMessage()), 'mybooks');
 
             return false;
         } catch (Throwable $e) {
-            // A missing cover is cosmetic; the next sync tries again.
-            Craft::warning(sprintf('Could not store the cover of “%s”: %s', $book->title, $e->getMessage()), 'mybooks');
+            // A timeout or a server error: the next run tries again.
+            Craft::warning(sprintf('Could not store the cover at %s: %s', $url, $e->getMessage()), 'mybooks');
 
             return false;
         } finally {
@@ -111,57 +239,20 @@ class CoversService extends Component
             }
         }
 
-        $previous = $book->coverSourceUrl !== null ? $book->coverAssetId : null;
-
-        Db::update(BookRecord::TABLE, [
-            'coverAssetId' => $asset->id,
-            'coverSourceUrl' => $book->coverUrl,
-        ], ['id' => $book->id]);
-
-        $book->coverAssetId = (int)$asset->id;
-        $book->coverSourceUrl = $book->coverUrl;
-        $book->setCover($asset);
-
-        if ($previous !== null && $previous !== (int)$asset->id) {
-            $this->deleteAsset($previous);
-        }
+        $this->saveRecord($url, (int)$asset->id, CoverRecord::STATUS_STORED);
+        $this->assets[$url] = $asset;
 
         return true;
     }
 
-    /**
-     * Removes a cover this plugin downloaded. Covers an editor picked from
-     * the asset library are never touched (coverSourceUrl is null for those).
-     */
-    public function deleteCover(Book $book): void
+    private function saveRecord(string $url, ?int $assetId, string $status): void
     {
-        if ($book->coverAssetId === null || $book->coverSourceUrl === null) {
-            return;
-        }
-
-        $this->deleteAsset($book->coverAssetId);
-
-        if ($book->id !== null) {
-            Db::update(BookRecord::TABLE, ['coverAssetId' => null, 'coverSourceUrl' => null], ['id' => $book->id]);
-        }
-
-        $book->coverAssetId = null;
-        $book->coverSourceUrl = null;
-        $book->setCover(null);
-    }
-
-    public function deleteCoversOfReader(int $readerId): void
-    {
-        $ids = BookRecord::find()
-            ->select(['coverAssetId'])
-            ->where(['readerId' => $readerId])
-            ->andWhere(['not', ['coverAssetId' => null]])
-            ->andWhere(['not', ['coverSourceUrl' => null]])
-            ->column();
-
-        foreach ($ids as $id) {
-            $this->deleteAsset((int)$id);
-        }
+        $record = CoverRecord::findOne(['urlHash' => CoverRecord::hash($url)]) ?? new CoverRecord();
+        $record->urlHash = CoverRecord::hash($url);
+        $record->url = $url;
+        $record->assetId = $assetId;
+        $record->status = $status;
+        $record->save(false);
     }
 
     /**
@@ -252,10 +343,9 @@ class CoversService extends Component
         }
     }
 
-    private function saveAsset(Volume $volume, Book $book, string $tempPath, string $extension): Asset
+    private function saveAsset(Volume $volume, string $url, ?string $title, string $tempPath, string $extension): Asset
     {
-        $settings = Plugin::getInstance()?->getSettings();
-        $folderPath = $settings?->getCoverFolderPath() ?? 'mybooks';
+        $folderPath = Plugin::getInstance()?->getSettings()->getCoverFolderPath() ?? 'mybooks';
         $assets = Craft::$app->getAssets();
 
         $folder = $folderPath !== ''
@@ -266,17 +356,16 @@ class CoversService extends Component
             throw new \RuntimeException('The cover folder could not be created.');
         }
 
-        $reader = $book->getReader();
-        $slug = StringHelper::slugify($book->title) ?: 'book';
-        $filename = sprintf('%s-%s-%s.%s', $reader->handle ?? 'reader', $slug, $book->externalId, $extension);
+        $slug = StringHelper::slugify((string)$title) ?: 'cover';
+        $filename = sprintf('%s-%s.%s', mb_substr($slug, 0, 80), substr(CoverRecord::hash($url), 0, 8), $extension);
 
         $asset = new Asset();
         $asset->tempFilePath = $tempPath;
-        $asset->setFilename(mb_substr(FileHelper::sanitizeFilename($filename, ['asciiOnly' => true]), 0, 200));
+        $asset->setFilename(FileHelper::sanitizeFilename($filename, ['asciiOnly' => true]));
         $asset->newFolderId = (int)$folder->id;
         $asset->setVolumeId((int)$volume->id);
         $asset->avoidFilenameConflicts = true;
-        $asset->title = $book->title;
+        $asset->title = $title ?: null;
         $asset->setScenario(Asset::SCENARIO_CREATE);
 
         if (!Craft::$app->getElements()->saveElement($asset)) {
@@ -286,7 +375,7 @@ class CoversService extends Component
         return $asset;
     }
 
-    public function deleteAsset(int $assetId): void
+    private function deleteAsset(int $assetId): void
     {
         $asset = Asset::find()->id($assetId)->status(null)->one();
 

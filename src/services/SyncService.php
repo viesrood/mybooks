@@ -9,48 +9,98 @@ use craft\helpers\Db;
 use craft\helpers\Json;
 use viesrood\mybooks\enums\Shelf;
 use viesrood\mybooks\events\SyncEvent;
-use viesrood\mybooks\models\Book;
+use viesrood\mybooks\models\Account;
 use viesrood\mybooks\models\BookData;
-use viesrood\mybooks\models\Reader;
 use viesrood\mybooks\models\SyncOutcome;
 use viesrood\mybooks\Plugin;
+use viesrood\mybooks\providers\OpenLibrary;
 use viesrood\mybooks\records\BookRecord;
 use yii\base\Component;
 
 /**
- * Copies a reader's shelves from their book service into the local table.
+ * Copies the shelves of linked Open Library accounts into the local table,
+ * and stores covers locally.
  *
  * Rules:
  * - a shelf that failed to load keeps its last good books;
  * - a book is only written when something about it changed (hash);
- * - only this provider's books are ever removed.
+ * - a quiet sync writes nothing and reports nothing.
  */
 class SyncService extends Component
 {
     public const EVENT_AFTER_SYNC = 'afterSync';
 
-    public function syncReader(Reader $reader): SyncOutcome
+    private ?OpenLibrary $openLibrary = null;
+
+    /**
+     * Syncs every linked account, removes accounts nobody links to any more,
+     * and deletes covers nothing uses.
+     *
+     * @return array<string, SyncOutcome> Keyed by account.
+     */
+    public function syncAll(): array
+    {
+        $plugin = Plugin::getInstance();
+        $accounts = $plugin?->getAccounts();
+
+        if ($plugin === null || $accounts === null) {
+            return [];
+        }
+
+        $accounts->discover(true);
+        $linked = $accounts->getLinkedAccounts();
+        $outcomes = [];
+
+        foreach ($linked as $account) {
+            $outcomes[$account] = $this->syncAccount($account);
+        }
+
+        $accounts->removeUnused($linked);
+        $this->storeManualCovers();
+        $plugin->getCovers()->collectGarbage($this->coverUrlsInUse());
+
+        return $outcomes;
+    }
+
+    /**
+     * Stores covers of hand-picked books that are not stored yet (the save
+     * of an element queues this too; this is the safety net).
+     */
+    public function storeManualCovers(): int
+    {
+        $plugin = Plugin::getInstance();
+
+        if ($plugin === null) {
+            return 0;
+        }
+
+        $urls = array_fill_keys($plugin->getAccounts()->getManualCoverUrls(), null);
+
+        return $plugin->getCovers()->store($urls, $plugin->getSettings()->maxCoverDownloadsPerSync);
+    }
+
+    public function syncAccount(string $account): SyncOutcome
     {
         $outcome = new SyncOutcome();
-        $provider = $reader->getProviderInstance();
+        $plugin = Plugin::getInstance();
 
-        if ($provider === null || !$provider->supportsSync() || $reader->id === null) {
+        if ($plugin === null || OpenLibrary::normalizeUsername($account) === '') {
             $outcome->skipped = true;
 
             return $outcome;
         }
 
-        $plugin = Plugin::getInstance();
-        $settings = $plugin?->getSettings();
-        $shelves = $reader->getShelves();
-        $result = $provider->fetchShelves($reader, $shelves, $settings->maxBooksPerShelf ?? 50);
+        $settings = $plugin->getSettings();
+        $status = $plugin->getAccounts()->ensureAccount($account);
+        $shelves = $plugin->getAccounts()->getShelvesForAccount($account);
+        $result = $this->openLibrary()->fetchShelves($account, $shelves, $settings->maxBooksPerShelf);
         $outcome->errors = $result->getErrors();
 
         /** @var array<string, BookRecord> $existing keyed by externalId */
         $existing = [];
 
         /** @var BookRecord[] $records */
-        $records = BookRecord::find()->where(['readerId' => $reader->id, 'provider' => $provider::handle()])->all();
+        $records = BookRecord::find()->where(['accountId' => $status->id])->all();
 
         foreach ($records as $record) {
             $existing[$record->externalId] = $record;
@@ -59,52 +109,53 @@ class SyncService extends Component
         $seen = [];
         $fetched = $result->getBooks();
 
-        foreach ($fetched as $shelf => $books) {
+        foreach ($fetched as $books) {
             foreach ($books as $position => $data) {
                 $seen[$data->externalId] = true;
-                $this->upsert($reader, $provider::handle(), $data, $position, $existing[$data->externalId] ?? null, $outcome);
+                $this->upsert($status, $data, $position, $existing[$data->externalId] ?? null, $outcome);
             }
         }
 
-        // Remove books that are no longer on any shelf that loaded, plus books
-        // on shelves the reader no longer syncs. Shelves that failed keep theirs.
+        // Books gone from a shelf that loaded are removed, and so are books
+        // on shelves no field shows any more; shelves that failed keep theirs.
         $wanted = array_map(static fn(Shelf $shelf): string => $shelf->value, $shelves);
 
         foreach ($existing as $externalId => $record) {
-            if (isset($seen[$externalId])) {
-                continue;
-            }
+            $dropped = !in_array($record->shelf, $wanted, true);
 
-            $shelfLoaded = array_key_exists($record->shelf, $fetched);
-            $shelfDropped = !in_array($record->shelf, $wanted, true);
-
-            if ($shelfLoaded || $shelfDropped) {
-                $this->remove($record);
+            if (!isset($seen[$externalId]) && ($dropped || array_key_exists($record->shelf, $fetched))) {
+                Db::delete(BookRecord::TABLE, ['id' => $record->id]);
                 $outcome->removed++;
             }
         }
 
-        // Books from a provider this reader no longer uses.
-        $outcome->removed += $this->removeOtherProviders($reader, $provider::handle());
-
-        $plugin?->getBooks()->forget($reader->id);
-        $outcome->covers = $this->syncCovers($reader, $settings->maxCoverDownloadsPerSync ?? 40);
-        $plugin?->getBooks()->forget($reader->id);
-
-        $plugin?->getReaders()->recordSync($reader, $outcome->errorSummary());
+        $plugin->getBooks()->forget($account);
+        $outcome->covers = $this->storeCoversFor($account);
+        $plugin->getAccounts()->recordSync($status, $outcome->errorSummary());
 
         if ($this->hasEventHandlers(self::EVENT_AFTER_SYNC)) {
             $this->trigger(self::EVENT_AFTER_SYNC, new SyncEvent([
-                'reader' => $reader,
+                'account' => $account,
                 'changed' => $outcome->changed(),
                 'errors' => $outcome->errors,
+                'elements' => $plugin->getAccounts()->getElementsForAccount($account),
             ]));
         }
 
         return $outcome;
     }
 
-    private function upsert(Reader $reader, string $provider, BookData $data, int $position, ?BookRecord $record, SyncOutcome $outcome): void
+    public function setOpenLibrary(OpenLibrary $openLibrary): void
+    {
+        $this->openLibrary = $openLibrary;
+    }
+
+    private function openLibrary(): OpenLibrary
+    {
+        return $this->openLibrary ??= new OpenLibrary();
+    }
+
+    private function upsert(Account $account, BookData $data, int $position, ?BookRecord $record, SyncOutcome $outcome): void
     {
         $hash = $data->hash();
 
@@ -116,8 +167,7 @@ class SyncService extends Component
 
         if ($record === null) {
             $record = new BookRecord();
-            $record->readerId = (int)$reader->id;
-            $record->provider = $provider;
+            $record->accountId = (int)$account->id;
             $record->externalId = $data->externalId;
         }
 
@@ -146,73 +196,45 @@ class SyncService extends Component
         }
     }
 
-    private function remove(BookRecord $record): void
-    {
-        $book = Book::fromRecord($record);
-        Plugin::getInstance()?->getCovers()->deleteCover($book);
-        Db::delete(BookRecord::TABLE, ['id' => $record->id]);
-    }
-
-    private function removeOtherProviders(Reader $reader, string $provider): int
-    {
-        /** @var BookRecord[] $records */
-        $records = BookRecord::find()
-            ->where(['readerId' => $reader->id])
-            ->andWhere(['not', ['provider' => $provider]])
-            ->all();
-
-        foreach ($records as $record) {
-            $this->remove($record);
-        }
-
-        return count($records);
-    }
-
     /**
-     * Downloads missing or changed covers, at most $max per run.
+     * Stores missing covers of an account, what a page shows first first: a
+     * big "want to read" shelf must not use up the budget before "currently
+     * reading".
      */
-    private function syncCovers(Reader $reader, int $max): int
+    private function storeCoversFor(string $account): int
     {
-        $covers = Plugin::getInstance()?->getCovers();
+        $plugin = Plugin::getInstance();
 
-        if ($covers === null || !$covers->isEnabled() || $max <= 0) {
+        if ($plugin === null || !$plugin->getCovers()->isEnabled()) {
             return 0;
         }
 
-        $changed = 0;
-        $attempts = 0;
-
-        // What a page shows first gets its cover first: a big "want to read"
-        // shelf must not use up the budget before "currently reading".
-        $books = [];
+        $urls = [];
 
         foreach ([Shelf::Reading, Shelf::Read, Shelf::Want] as $shelf) {
-            array_push($books, ...(Plugin::getInstance()?->getBooks()->getBooks($reader, $shelf) ?? []));
-        }
-
-        foreach ($books as $book) {
-            // coverSourceUrl is the URL we last fetched (or gave up on), so a
-            // new URL from the service is fetched and a known one is not.
-            $needsDownload = $book->coverUrl !== null && $book->coverSourceUrl !== $book->coverUrl;
-            $needsRemoval = $book->coverUrl === null && $book->coverAssetId !== null && $book->coverSourceUrl !== null;
-
-            if (!$needsDownload && !$needsRemoval) {
-                continue;
-            }
-
-            if ($needsDownload && $attempts >= $max) {
-                continue;
-            }
-
-            if ($needsDownload) {
-                $attempts++;
-            }
-
-            if ($covers->downloadForBook($book)) {
-                $changed++;
+            foreach ($plugin->getBooks()->getSyncedBooks($account) as $book) {
+                if ($book->getShelf() === $shelf && $book->coverUrl !== null) {
+                    $urls[$book->coverUrl] ??= $book->title;
+                }
             }
         }
 
-        return $changed;
+        return $plugin->getCovers()->store($urls, $plugin->getSettings()->maxCoverDownloadsPerSync);
+    }
+
+    /**
+     * @return string[]
+     */
+    private function coverUrlsInUse(): array
+    {
+        $plugin = Plugin::getInstance();
+
+        if ($plugin === null) {
+            return [];
+        }
+
+        $synced = BookRecord::find()->select(['coverUrl'])->where(['not', ['coverUrl' => null]])->column();
+
+        return array_values(array_unique(array_merge($synced, $plugin->getAccounts()->getManualCoverUrls())));
     }
 }
