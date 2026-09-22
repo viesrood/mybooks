@@ -11,6 +11,7 @@ use craft\helpers\FileHelper;
 use craft\helpers\StringHelper;
 use craft\models\Volume;
 use GuzzleHttp\ClientInterface;
+use GuzzleHttp\Exception\ClientException;
 use Throwable;
 use viesrood\mybooks\models\Book;
 use viesrood\mybooks\Plugin;
@@ -71,7 +72,7 @@ class CoversService extends Component
 
         if ($book->coverUrl === null) {
             // The service dropped the cover: remove our copy too.
-            if ($book->coverSourceUrl !== null) {
+            if ($book->coverAssetId !== null && $book->coverSourceUrl !== null) {
                 $this->deleteCover($book);
 
                 return true;
@@ -80,7 +81,8 @@ class CoversService extends Component
             return false;
         }
 
-        if ($book->coverAssetId !== null && $book->coverSourceUrl === $book->coverUrl) {
+        // Already fetched, or already found unusable.
+        if ($book->coverSourceUrl === $book->coverUrl) {
             return false;
         }
 
@@ -89,6 +91,15 @@ class CoversService extends Component
         try {
             $extension = $this->fetch($book->coverUrl, $tempPath);
             $asset = $this->saveAsset($volume, $book, $tempPath, $extension);
+        } catch (CoverRejectedException|ClientException $e) {
+            // This URL will never give a usable cover (a placeholder, a 404,
+            // not an image). Remember that, so the next sync does not fetch
+            // it again; a different URL from the service is tried as usual.
+            Db::update(BookRecord::TABLE, ['coverSourceUrl' => $book->coverUrl], ['id' => $book->id]);
+            $book->coverSourceUrl = $book->coverUrl;
+            Craft::info(sprintf('No usable cover for “%s”: %s', $book->title, $e->getMessage()), 'mybooks');
+
+            return false;
         } catch (Throwable $e) {
             // A missing cover is cosmetic; the next sync tries again.
             Craft::warning(sprintf('Could not store the cover of “%s”: %s', $book->title, $e->getMessage()), 'mybooks');
@@ -178,33 +189,33 @@ class CoversService extends Component
                 $length = (int)$response->getHeaderLine('Content-Length');
 
                 if ($length > self::MAX_BYTES) {
-                    throw new \RuntimeException('Cover is too large.');
+                    throw new CoverRejectedException('Cover is too large.');
                 }
             },
         ]);
 
         if ($response->getStatusCode() !== 200) {
-            throw new \RuntimeException('HTTP ' . $response->getStatusCode());
+            throw new CoverRejectedException('HTTP ' . $response->getStatusCode());
         }
 
         $size = filesize($tempPath);
 
         if ($size === false || $size === 0 || $size > self::MAX_BYTES) {
-            throw new \RuntimeException('Cover is empty or too large.');
+            throw new CoverRejectedException('Cover is empty or too large.');
         }
 
         // Trust the bytes, not the Content-Type header or the URL.
         $mimeType = FileHelper::getMimeType($tempPath, null, false);
 
         if (!is_string($mimeType) || !isset(self::ALLOWED_TYPES[$mimeType])) {
-            throw new \RuntimeException('Not an image: ' . (is_string($mimeType) ? $mimeType : 'unknown'));
+            throw new CoverRejectedException('Not an image: ' . (is_string($mimeType) ? $mimeType : 'unknown'));
         }
 
         // Open Library answers a missing cover with a 1x1 pixel GIF.
         $dimensions = @getimagesize($tempPath);
 
         if ($dimensions === false || $dimensions[0] < 10 || $dimensions[1] < 10) {
-            throw new \RuntimeException('Placeholder image, not a cover.');
+            throw new CoverRejectedException('Placeholder image, not a cover.');
         }
 
         return self::ALLOWED_TYPES[$mimeType];
@@ -224,7 +235,7 @@ class CoversService extends Component
         $scheme = strtolower((string)parse_url($url, PHP_URL_SCHEME));
 
         if (!is_string($host) || $host === '' || !in_array($scheme, ['http', 'https'], true)) {
-            throw new \RuntimeException('Not a web URL.');
+            throw new CoverRejectedException('Not a web URL.');
         }
 
         $host = trim($host, '[]');
@@ -236,7 +247,7 @@ class CoversService extends Component
 
         foreach ($ips as $ip) {
             if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE) === false) {
-                throw new \RuntimeException('Host resolves to a private address.');
+                throw new CoverRejectedException('Host resolves to a private address.');
             }
         }
     }

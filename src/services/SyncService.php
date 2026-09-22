@@ -182,10 +182,19 @@ class SyncService extends Component
         $changed = 0;
         $attempts = 0;
 
-        foreach (Plugin::getInstance()?->getBooks()->getBooks($reader) ?? [] as $book) {
-            $needsDownload = $book->coverUrl !== null
-                && ($book->coverAssetId === null || ($book->coverSourceUrl !== null && $book->coverSourceUrl !== $book->coverUrl));
-            $needsRemoval = $book->coverUrl === null && $book->coverSourceUrl !== null;
+        // What a page shows first gets its cover first: a big "want to read"
+        // shelf must not use up the budget before "currently reading".
+        $books = [];
+
+        foreach ([Shelf::Reading, Shelf::Read, Shelf::Want] as $shelf) {
+            array_push($books, ...(Plugin::getInstance()?->getBooks()->getBooks($reader, $shelf) ?? []));
+        }
+
+        foreach ($books as $book) {
+            // coverSourceUrl is the URL we last fetched (or gave up on), so a
+            // new URL from the service is fetched and a known one is not.
+            $needsDownload = $book->coverUrl !== null && $book->coverSourceUrl !== $book->coverUrl;
+            $needsRemoval = $book->coverUrl === null && $book->coverAssetId !== null && $book->coverSourceUrl !== null;
 
             if (!$needsDownload && !$needsRemoval) {
                 continue;

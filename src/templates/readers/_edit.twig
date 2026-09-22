@@ -47,7 +47,7 @@
         required: true,
     }) }}
 
-    <div data-mybooks-needs="account">
+    <div data-mybooks-needs="account" class="mybooks-group">
         {{ forms.autosuggestField({
             label: 'Username'|t('mybooks'),
             instructions: 'The username at Open Library, as in openlibrary.org/people/username. The reading log has to be public (Settings → Privacy on Open Library).'|t('mybooks'),
@@ -61,7 +61,7 @@
         }) }}
     </div>
 
-    <div data-mybooks-needs="token">
+    <div data-mybooks-needs="token" class="mybooks-group">
         {{ forms.autosuggestField({
             label: 'API token'|t('mybooks'),
             instructions: 'The name of an environment variable that holds the token, for example $HARDCOVER_TOKEN_JANE. Create the token on hardcover.app under Account → Hardcover API. The token itself never goes into project config.'|t('mybooks'),
@@ -76,7 +76,7 @@
         }) }}
     </div>
 
-    <div data-mybooks-needs="sync">
+    <div data-mybooks-needs="sync" class="mybooks-group">
         {{ forms.checkboxSelectField({
             label: 'Shelves'|t('mybooks'),
             instructions: 'Which shelves to copy. Books on other shelves are left out.'|t('mybooks'),
@@ -97,6 +97,11 @@
         {{ 'Books for this reader are entered by hand. Save the reader, then add books under Books.'|t('mybooks') }}
     </p>
 {% endblock %}
+
+{% css %}
+    .mybooks-group { margin-top: 24px; }
+    .mybooks-group > .field + .field { margin-top: 24px; }
+{% endcss %}
 
 {% if isNew %}
     {% js %}

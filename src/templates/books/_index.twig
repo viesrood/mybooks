@@ -23,8 +23,8 @@
     {% for option in craft.mybooks.shelves() %}
         {% set shelfBooks = books|filter(b => b.shelf.value == option.value) %}
         {% if shelfBooks|length %}
-            <h2>{{ option.label }} <span class="light">({{ shelfBooks|length }})</span></h2>
-            <div class="tablepane" style="margin-bottom: 24px;">
+            <h2{% if not loop.first %} style="margin-top: 32px;"{% endif %}>{{ option.label }} <span class="light">({{ shelfBooks|length }})</span></h2>
+            <div>
                 <table class="data fullwidth mybooks-books" data-shelf="{{ option.value }}">
                     <thead>
                         <tr>
@@ -43,10 +43,10 @@
                     <tbody>
                         {% for book in shelfBooks %}
                             <tr data-id="{{ book.id }}" data-name="{{ book.title }}">
-                                <td class="thin">
+                                <td style="width: 30px;">
                                     {% set src = book.getCoverSrc() %}
                                     {% if src %}
-                                        <img src="{{ src }}" alt="" width="30" height="45" loading="lazy" style="display: block; width: 30px; height: 45px; object-fit: cover; border-radius: 2px;">
+                                        <img src="{{ src }}" alt="" width="30" height="45" loading="lazy" style="display: block; width: 30px; max-width: none; height: 45px; object-fit: cover; border-radius: 2px;">
                                     {% endif %}
                                 </td>
                                 <th scope="row" data-title="{{ 'Title'|t('mybooks') }}">
