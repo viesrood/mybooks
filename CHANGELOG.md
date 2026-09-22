@@ -1,6 +1,6 @@
 # Release Notes for My Books
 
-## 1.0.0 - Unreleased
+## 1.0.0 - 2026-09-22
 
 - Initial release.
 - A Books field: pick books by searching Open Library (title, author or ISBN), or link an Open Library account whose shelves are synced.
