@@ -1,0 +1,44 @@
+{% if not hasReaders %}
+    <p class="zilch small">{{ 'There are no readers yet. Add one under My Books.'|t('mybooks') }}</p>
+{% elseif groups is empty %}
+    <p class="zilch small">{{ 'Nothing on this shelf.'|t('mybooks') }}</p>
+{% else %}
+    <div class="mybooks-widget">
+        {% for group in groups %}
+            {% if showNames %}
+                <h3 class="mybooks-widget__name">{{ group.reader.name }}</h3>
+            {% endif %}
+            <ul class="mybooks-widget__list" role="list">
+                {% for book in group.books %}
+                    <li class="mybooks-widget__book">
+                        {% set src = book.getCoverSrc() %}
+                        {% if src %}
+                            <img src="{{ src }}" alt="" loading="lazy" width="60" height="90">
+                        {% else %}
+                            <span class="mybooks-widget__nocover" aria-hidden="true"></span>
+                        {% endif %}
+                        <div>
+                            <div class="mybooks-widget__title">{{ book.title }}</div>
+                            <div class="light smalltext">{{ book.authorsString }}</div>
+                            {% if book.progress is not null and shelf.value == 'reading' %}
+                                <div class="mybooks-widget__bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ book.progress }}" aria-label="{{ '{percent}% read'|t('mybooks', { percent: book.progress }) }}">
+                                    <span style="width: {{ book.progress }}%"></span>
+                                </div>
+                            {% endif %}
+                        </div>
+                    </li>
+                {% endfor %}
+            </ul>
+        {% endfor %}
+    </div>
+    {% css %}
+        .mybooks-widget__name { margin: 14px 0 6px; font-size: 13px; }
+        .mybooks-widget__name:first-child { margin-top: 0; }
+        .mybooks-widget__list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+        .mybooks-widget__book { display: grid; grid-template-columns: 40px 1fr; gap: 10px; align-items: center; }
+        .mybooks-widget__book img, .mybooks-widget__nocover { display: block; width: 40px; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 3px; background: var(--gray-100); }
+        .mybooks-widget__title { font-weight: 600; }
+        .mybooks-widget__bar { margin-top: 4px; height: 4px; border-radius: 2px; background: var(--gray-100); overflow: hidden; }
+        .mybooks-widget__bar span { display: block; height: 100%; background: var(--link-color); }
+    {% endcss %}
+{% endif %}

@@ -1,0 +1,41 @@
+{#
+ # My Books: default markup for one shelf.
+ #
+ # Override: copy this file to templates/mybooks/_shelf.twig in your site.
+ # Variables: reader, shelf, books, heading, headingLevel, showProgress, transform
+ #}
+{% set listId = 'mybooks-' ~ reader.handle ~ '-' ~ shelf.value %}
+{% set label = heading ?: (reader.name ~ ': ' ~ shelf.label) %}
+<section class="mybooks" {% if heading %}aria-labelledby="{{ listId }}-heading"{% else %}aria-label="{{ label }}"{% endif %}>
+    {% if heading %}
+        <h{{ headingLevel }} id="{{ listId }}-heading" class="mybooks__heading">{{ heading }}</h{{ headingLevel }}>
+    {% endif %}
+    {# The list scrolls sideways, so it has to be reachable with the keyboard. #}
+    <ul class="mybooks__list" role="list" tabindex="0" aria-label="{{ label }}">
+        {% for book in books %}
+            <li class="mybooks__book">
+                {% set src = book.getCoverSrc(transform) %}
+                {% if src %}
+                    {# alt is empty on purpose: the title is right below the cover. #}
+                    <img class="mybooks__cover" src="{{ src }}" alt="" loading="lazy" decoding="async" width="200" height="300">
+                {% else %}
+                    <span class="mybooks__cover mybooks__cover--empty" aria-hidden="true">{{ book.title }}</span>
+                {% endif %}
+                <p class="mybooks__title">
+                    {% if book.url %}
+                        <a href="{{ book.url }}" rel="noopener" target="_blank">{{ book.title }}<span class="mybooks__sr"> {{ '(opens in a new window)'|t('mybooks') }}</span></a>
+                    {% else %}
+                        {{ book.title }}
+                    {% endif %}
+                </p>
+                {% if book.authors|length %}
+                    <p class="mybooks__authors">{{ book.getAuthorsString(', ', ' & ') }}</p>
+                {% endif %}
+                {% if showProgress and book.progress is not null and shelf.value == 'reading' %}
+                    {% set progressLabel = '{percent}% read'|t('mybooks', { percent: book.progress }) %}
+                    <progress class="mybooks__progress" max="100" value="{{ book.progress }}" aria-label="{{ progressLabel }}">{{ progressLabel }}</progress>
+                {% endif %}
+            </li>
+        {% endfor %}
+    </ul>
+</section>

@@ -1,0 +1,66 @@
+{
+    "name": "viesrood/mybooks",
+    "description": "Show what your team is reading in Craft CMS 5: Open Library, Hardcover or hand-entered shelves, synced in the background, with a reader field, a dashboard widget and dependency-free Twig markup.",
+    "type": "craft-plugin",
+    "license": "MIT",
+    "keywords": [
+        "craft",
+        "craftcms",
+        "craft-plugin",
+        "books",
+        "reading",
+        "open-library",
+        "hardcover",
+        "currently-reading"
+    ],
+    "support": {
+        "docs": "https://github.com/viesrood/mybooks/blob/main/README.md",
+        "issues": "https://github.com/viesrood/mybooks/issues",
+        "source": "https://github.com/viesrood/mybooks"
+    },
+    "require": {
+        "craftcms/cms": "^5.0.0",
+        "php": ">=8.2"
+    },
+    "require-dev": {
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^11.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "viesrood\\mybooks\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "viesrood\\mybooks\\tests\\": "tests/"
+        }
+    },
+    "config": {
+        "sort-packages": true,
+        "platform": {
+            "php": "8.2.0"
+        },
+        "allow-plugins": {
+            "yiisoft/yii2-composer": true,
+            "craftcms/plugin-installer": true
+        }
+    },
+    "scripts": {
+        "check": [
+            "@test",
+            "@analyse"
+        ],
+        "test": "phpunit",
+        "analyse": "phpstan analyse --no-progress --memory-limit=512M"
+    },
+    "extra": {
+        "handle": "mybooks",
+        "name": "My Books",
+        "class": "viesrood\\mybooks\\Plugin",
+        "developer": "Viesrood",
+        "developerUrl": "https://viesrood.nl",
+        "documentationUrl": "https://github.com/viesrood/mybooks",
+        "changelogUrl": "https://raw.githubusercontent.com/viesrood/mybooks/main/CHANGELOG.md"
+    }
+}

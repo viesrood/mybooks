@@ -1,0 +1,57 @@
+{
+  "page": 1,
+  "numFound": 4,
+  "reading_log_entries": [
+    {
+      "work": {
+        "title": "Fantastic Mr Fox",
+        "key": "/works/OL45804W",
+        "author_keys": ["/authors/OL34184A"],
+        "author_names": ["Roald Dahl", "Roald Dahl"],
+        "first_publish_year": 1970,
+        "lending_edition_s": null,
+        "edition_key": ["OL7353617M"],
+        "cover_id": 6498519,
+        "cover_edition_key": "OL7353617M"
+      },
+      "logged_edition": "/books/OL7353617M",
+      "logged_date": "2026/03/14, 09:12:44"
+    },
+    {
+      "work": {
+        "title": null,
+        "key": "/works/OL1W",
+        "author_keys": [],
+        "author_names": [],
+        "first_publish_year": null,
+        "lending_edition_s": null,
+        "edition_key": null,
+        "cover_id": null,
+        "cover_edition_key": null
+      },
+      "logged_edition": null,
+      "logged_date": null
+    },
+    {
+      "work": {
+        "title": "  De\nAanslag ",
+        "key": "/works/OL2744160W",
+        "author_keys": ["/authors/OL1A"],
+        "author_names": ["Harry Mulisch"],
+        "first_publish_year": 1982,
+        "lending_edition_s": null,
+        "edition_key": null,
+        "cover_id": 0,
+        "cover_edition_key": null
+      },
+      "logged_edition": null,
+      "logged_date": "2026/02/30, 10:00:00"
+    },
+    {
+      "work": {
+        "title": "Broken",
+        "key": "/books/OL7353617M"
+      }
+    }
+  ]
+}

@@ -1,0 +1,21 @@
+parameters:
+    level: 6
+    paths:
+        - src
+        - tests
+    treatPhpDocTypesAsCertain: false
+    tmpDir: /tmp/mybooks-phpstan
+    # Neither Yii.php nor Craft.php is autoloaded by Composer: Craft requires
+    # them from its own bootstrap. Without this, every `Craft::$app` reads as an
+    # unknown class and the whole analysis is silently meaningless.
+    scanFiles:
+        - vendor/yiisoft/yii2/Yii.php
+        - vendor/craftcms/cms/src/Craft.php
+    ignoreErrors:
+        # `Craft::$app` inherits its docblock from `yii\BaseYii`, where it is
+        # typed as a plain Yii application, so every Craft-specific component
+        # reads as undefined. Same rule as in SeoKit; these patterns only ever
+        # arise from that one inherited docblock.
+        -
+            identifier: method.notFound
+            message: '#^Call to an undefined method yii\\[\w\\<>|]*(Application|Request|View|Session|Connection|UrlManager|User)[\w\\<>|]*::#'

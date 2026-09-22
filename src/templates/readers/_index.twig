@@ -1,0 +1,139 @@
+{% extends '_layouts/cp' %}
+{% set title = 'My Books'|t('mybooks') %}
+{% set selectedSubnavItem = 'readers' %}
+
+{% block actionButton %}
+    <div class="flex">
+        {% if readers|length %}
+            <form method="post" accept-charset="UTF-8">
+                {{ csrfInput() }}
+                {{ actionInput('mybooks/readers/sync') }}
+                {{ redirectInput('mybooks') }}
+                <button type="submit" class="btn">{{ 'Sync all'|t('mybooks') }}</button>
+            </form>
+        {% endif %}
+        {% if canEdit %}
+            <a href="{{ url('mybooks/readers/new') }}" class="btn submit add icon">{{ 'New reader'|t('mybooks') }}</a>
+        {% endif %}
+    </div>
+{% endblock %}
+
+{% if not canEdit and currentUser.admin %}
+    {% set contentNotice = readOnlyNotice() %}
+{% endif %}
+
+{% block content %}
+    {% if not coversEnabled %}
+        <div class="readable" style="margin-bottom: 24px;">
+            <blockquote class="note warning">
+                <p>{{ 'Covers are loaded from the book service, so every visitor’s browser contacts that service. Choose a cover volume in the plugin settings to keep a local copy instead.'|t('mybooks') }}</p>
+            </blockquote>
+        </div>
+    {% endif %}
+
+    <p id="mybooks-noreaders" class="zilch{% if readers|length %} hidden{% endif %}">
+        {{ 'There are no readers yet. Add one under My Books.'|t('mybooks') }}
+    </p>
+
+    {% if readers|length %}
+        <div class="tablepane">
+            <table id="mybooks-readers" class="data fullwidth">
+                <thead>
+                    <tr>
+                        <th scope="col">{{ 'Name'|t('mybooks') }}</th>
+                        <th scope="col">{{ 'Handle'|t('mybooks') }}</th>
+                        <th scope="col">{{ 'Book service'|t('mybooks') }}</th>
+                        <th scope="col">{{ 'Books'|t('mybooks') }}</th>
+                        <th scope="col">{{ 'Last sync'|t('mybooks') }}</th>
+                        <td class="thin"></td>
+                        {% if canEdit %}
+                            <td class="thin"></td>
+                            <td class="thin"></td>
+                        {% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for reader in readers %}
+                        {% set provider = reader.providerInstance %}
+                        {% set readerCounts = counts[reader.id] ?? {} %}
+                        <tr data-id="{{ reader.id }}" data-name="{{ reader.name }}">
+                            <th scope="row" data-title="{{ 'Name'|t('mybooks') }}">
+                                {% if reader.lastError %}
+                                    <span class="status red" role="img" aria-label="{{ 'Error'|t('mybooks') }}"></span>
+                                {% elseif provider and not provider.supportsSync() %}
+                                    <span class="status" role="img" aria-label="{{ 'Entered by hand'|t('mybooks') }}"></span>
+                                {% elseif reader.lastSyncedAt %}
+                                    <span class="status green" role="img" aria-label="{{ 'Synced'|t('mybooks') }}"></span>
+                                {% else %}
+                                    <span class="status orange" role="img" aria-label="{{ 'Not synced yet'|t('mybooks') }}"></span>
+                                {% endif %}
+                                {% if canEdit %}
+                                    <a href="{{ reader.cpEditUrl }}">{{ reader.name }}</a>
+                                {% else %}
+                                    {{ reader.name }}
+                                {% endif %}
+                                {% if reader.lastError %}
+                                    <div class="error smalltext">{{ reader.lastError }}</div>
+                                {% endif %}
+                            </th>
+                            <td data-title="{{ 'Handle'|t('mybooks') }}"><code>{{ reader.handle }}</code></td>
+                            <td data-title="{{ 'Book service'|t('mybooks') }}">
+                                {{ provider ? provider.displayName() : reader.provider }}
+                                {% if reader.account %}<span class="light">({{ reader.account }})</span>{% endif %}
+                            </td>
+                            <td data-title="{{ 'Books'|t('mybooks') }}">
+                                <a href="{{ reader.cpBooksUrl }}">
+                                    {%- set parts = [] -%}
+                                    {%- for option in craft.mybooks.shelves() -%}
+                                        {%- if readerCounts[option.value] is defined -%}
+                                            {%- set parts = parts|merge([option.label ~ ': ' ~ readerCounts[option.value]]) -%}
+                                        {%- endif -%}
+                                    {%- endfor -%}
+                                    {{- parts ? parts|join(' · ') : 'No books yet'|t('mybooks') -}}
+                                </a>
+                            </td>
+                            <td data-title="{{ 'Last sync'|t('mybooks') }}">
+                                {% if provider and not provider.supportsSync() %}
+                                    <span class="light">{{ 'Not applicable'|t('mybooks') }}</span>
+                                {% elseif reader.lastSyncedAt %}
+                                    {{ reader.lastSyncedAt|timestamp('short') }}
+                                {% else %}
+                                    <span class="light">{{ 'Never'|t('mybooks') }}</span>
+                                {% endif %}
+                            </td>
+                            <td class="thin">
+                                {% if provider and provider.supportsSync() %}
+                                    <form method="post" accept-charset="UTF-8">
+                                        {{ csrfInput() }}
+                                        {{ actionInput('mybooks/readers/sync') }}
+                                        {{ hiddenInput('readerId', reader.id) }}
+                                        {{ redirectInput('mybooks') }}
+                                        <button type="submit" class="btn small">{{ 'Sync now'|t('mybooks') }}</button>
+                                    </form>
+                                {% endif %}
+                            </td>
+                            {% if canEdit %}
+                                <td class="thin"><a class="move icon" title="{{ 'Reorder'|t('mybooks') }}" aria-label="{{ 'Reorder'|t('mybooks') }}" role="button"></a></td>
+                                <td class="thin"><a class="delete icon" title="{{ 'Delete'|t('mybooks') }}" aria-label="{{ 'Delete'|t('mybooks') }}" role="button"></a></td>
+                            {% endif %}
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% if canEdit %}
+    {% js %}
+        new Craft.AdminTable({
+            tableSelector: '#mybooks-readers',
+            noItemsSelector: '#mybooks-noreaders',
+            sortable: true,
+            allowDeleteAll: true,
+            reorderAction: 'mybooks/readers/reorder',
+            deleteAction: 'mybooks/readers/delete',
+            confirmDeleteMessage: {{ 'Delete “{name}” and all of their books?'|t('mybooks')|json_encode|raw }},
+        });
+    {% endjs %}
+{% endif %}

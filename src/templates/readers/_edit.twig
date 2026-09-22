@@ -1,0 +1,143 @@
+{% extends '_layouts/cp' %}
+{% import '_includes/forms.twig' as forms %}
+
+{% set title = isNew ? 'New reader'|t('mybooks') : reader.name %}
+{% set fullPageForm = true %}
+{% set crumbs = [
+    { label: 'My Books'|t('mybooks'), url: url('mybooks') },
+] %}
+
+{% block content %}
+    {{ actionInput('mybooks/readers/save') }}
+    {{ redirectInput('mybooks') }}
+    {% if not isNew %}{{ hiddenInput('readerId', reader.id) }}{% endif %}
+
+    {{ forms.textField({
+        first: true,
+        label: 'Name'|t('mybooks'),
+        instructions: 'Who is reading. Shown next to their books.'|t('mybooks'),
+        id: 'name',
+        name: 'name',
+        value: reader.name,
+        errors: reader.getErrors('name'),
+        required: true,
+        autofocus: true,
+    }) }}
+
+    {{ forms.textField({
+        label: 'Handle'|t('mybooks'),
+        instructions: 'How templates refer to this reader: {code}.'|t('mybooks', { code: '<code>craft.mybooks.reader(\'handle\')</code>' })|raw,
+        id: 'handle',
+        name: 'handle',
+        class: 'code',
+        autocorrect: false,
+        autocapitalize: false,
+        value: reader.handle,
+        errors: reader.getErrors('handle'),
+        required: true,
+    }) }}
+
+    {{ forms.selectField({
+        label: 'Book service'|t('mybooks'),
+        id: 'provider',
+        name: 'provider',
+        options: providerOptions,
+        value: reader.provider,
+        errors: reader.getErrors('provider'),
+        required: true,
+    }) }}
+
+    <div data-mybooks-needs="account">
+        {{ forms.autosuggestField({
+            label: 'Username'|t('mybooks'),
+            instructions: 'The username at Open Library, as in openlibrary.org/people/username. The reading log has to be public (Settings → Privacy on Open Library).'|t('mybooks'),
+            id: 'account',
+            name: 'account',
+            class: 'code',
+            value: reader.account,
+            suggestEnvVars: true,
+            errors: reader.getErrors('account'),
+            required: true,
+        }) }}
+    </div>
+
+    <div data-mybooks-needs="token">
+        {{ forms.autosuggestField({
+            label: 'API token'|t('mybooks'),
+            instructions: 'The name of an environment variable that holds the token, for example $HARDCOVER_TOKEN_JANE. Create the token on hardcover.app under Account → Hardcover API. The token itself never goes into project config.'|t('mybooks'),
+            id: 'token',
+            name: 'token',
+            class: 'code',
+            value: reader.token,
+            suggestEnvVars: true,
+            placeholder: '$HARDCOVER_TOKEN',
+            errors: reader.getErrors('token'),
+            required: true,
+        }) }}
+    </div>
+
+    <div data-mybooks-needs="sync">
+        {{ forms.checkboxSelectField({
+            label: 'Shelves'|t('mybooks'),
+            instructions: 'Which shelves to copy. Books on other shelves are left out.'|t('mybooks'),
+            id: 'shelves',
+            name: 'shelves',
+            options: shelfOptions,
+            values: reader.shelfValues,
+            errors: reader.getErrors('shelves'),
+        }) }}
+
+        <div class="field">
+            <button type="button" class="btn" id="mybooks-test">{{ 'Test connection'|t('mybooks') }}</button>
+            <p id="mybooks-test-result" class="smalltext" role="status" aria-live="polite" style="margin-top: 8px;"></p>
+        </div>
+    </div>
+
+    <p data-mybooks-needs="manual" class="light">
+        {{ 'Books for this reader are entered by hand. Save the reader, then add books under Books.'|t('mybooks') }}
+    </p>
+{% endblock %}
+
+{% if isNew %}
+    {% js %}
+        new Craft.HandleGenerator('#name', '#handle');
+    {% endjs %}
+{% endif %}
+
+{% js %}
+(() => {
+    const providers = {{ providers|json_encode|raw }};
+    const select = document.getElementById('provider');
+    const toggle = () => {
+        const info = providers[select.value] || {};
+        document.querySelectorAll('[data-mybooks-needs]').forEach((el) => {
+            const need = el.dataset.mybooksNeeds;
+            const show = need === 'manual' ? info.sync === false : !!info[need];
+            el.classList.toggle('hidden', !show);
+        });
+    };
+    select.addEventListener('change', toggle);
+    toggle();
+
+    const button = document.getElementById('mybooks-test');
+    const result = document.getElementById('mybooks-test-result');
+    button.addEventListener('click', () => {
+        const form = button.closest('form');
+        const data = new FormData(form);
+        data.delete('action');
+        button.classList.add('loading');
+        result.textContent = '';
+        result.classList.remove('error', 'success');
+        Craft.sendActionRequest('POST', 'mybooks/readers/test-connection', { data })
+            .then(({ data }) => {
+                result.textContent = data.message;
+                result.classList.add('success');
+            })
+            .catch(({ response }) => {
+                result.textContent = response?.data?.message ?? Craft.t('app', 'A server error occurred.');
+                result.classList.add('error');
+            })
+            .finally(() => button.classList.remove('loading'));
+    });
+})();
+{% endjs %}

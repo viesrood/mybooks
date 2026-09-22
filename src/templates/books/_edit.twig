@@ -1,0 +1,185 @@
+{% extends '_layouts/cp' %}
+{% import '_includes/forms.twig' as forms %}
+
+{% set title = isNew ? 'New book'|t('mybooks') : book.title %}
+{% set fullPageForm = true %}
+{% set crumbs = [
+    { label: 'My Books'|t('mybooks'), url: url('mybooks') },
+    { label: reader.name, url: reader.cpBooksUrl },
+] %}
+
+{% block content %}
+    {{ actionInput('mybooks/books/save') }}
+    {{ hiddenInput('readerId', reader.id) }}
+    {% if not isNew %}{{ hiddenInput('bookId', book.id) }}{% endif %}
+    {{ hiddenInput('coverUrl', book.coverUrl, { id: 'coverUrl' }) }}
+
+    <div class="field" id="isbn-field">
+        <div class="heading">
+            <label for="isbn">{{ 'ISBN'|t('mybooks') }}</label>
+        </div>
+        <div class="instructions"><p>{{ 'Fill in an ISBN and click “Look up” to take the title, authors and cover from Open Library.'|t('mybooks') }}</p></div>
+        <div class="flex">
+            {{ tag('input', {
+                type: 'text',
+                id: 'isbn',
+                name: 'isbn',
+                value: book.isbn,
+                class: ['text', 'code'],
+                size: 17,
+                inputmode: 'numeric',
+                autocomplete: 'off',
+            }) }}
+            <button type="button" class="btn" id="mybooks-lookup">{{ 'Look up'|t('mybooks') }}</button>
+        </div>
+        <p id="mybooks-lookup-result" class="smalltext" role="status" aria-live="polite"></p>
+        {% if book.getErrors('isbn') %}{{ forms.errorList(book.getErrors('isbn')) }}{% endif %}
+    </div>
+
+    {{ forms.textField({
+        label: 'Title'|t('mybooks'),
+        id: 'title',
+        name: 'title',
+        value: book.title,
+        errors: book.getErrors('title'),
+        required: true,
+    }) }}
+
+    {{ forms.textField({
+        label: 'Subtitle'|t('mybooks'),
+        id: 'subtitle',
+        name: 'subtitle',
+        value: book.subtitle,
+        errors: book.getErrors('subtitle'),
+    }) }}
+
+    {{ forms.textareaField({
+        label: 'Authors'|t('mybooks'),
+        instructions: 'One author per line.'|t('mybooks'),
+        id: 'authors',
+        name: 'authors',
+        rows: 2,
+        value: book.authors|join("\n"),
+    }) }}
+
+    {{ forms.selectField({
+        label: 'Shelf'|t('mybooks'),
+        id: 'shelf',
+        name: 'shelf',
+        options: shelfOptions,
+        value: book.shelf.value,
+    }) }}
+
+    {{ forms.textField({
+        label: 'Progress'|t('mybooks'),
+        instructions: 'Percentage read. Only shown while the book is on “Currently reading”.'|t('mybooks'),
+        id: 'progress',
+        name: 'progress',
+        type: 'number',
+        min: 0,
+        max: 100,
+        size: 4,
+        unit: '%',
+        value: book.progress,
+        errors: book.getErrors('progress'),
+    }) }}
+
+    {{ forms.textField({
+        label: 'Rating'|t('mybooks'),
+        instructions: 'From 0.5 to 5, in half stars. Leave empty for no rating.'|t('mybooks'),
+        id: 'rating',
+        name: 'rating',
+        type: 'number',
+        min: 0,
+        max: 5,
+        step: 0.5,
+        size: 4,
+        value: book.rating,
+        errors: book.getErrors('rating'),
+    }) }}
+
+    {{ forms.dateField({
+        label: 'Started'|t('mybooks'),
+        id: 'startedAt',
+        name: 'startedAt',
+        value: book.startedDate,
+    }) }}
+
+    {{ forms.dateField({
+        label: 'Finished'|t('mybooks'),
+        id: 'finishedAt',
+        name: 'finishedAt',
+        value: book.finishedDate,
+        errors: book.getErrors('finishedAt'),
+    }) }}
+
+    {{ forms.textField({
+        label: 'Link'|t('mybooks'),
+        instructions: 'Optional: a page about the book.'|t('mybooks'),
+        id: 'url',
+        name: 'url',
+        type: 'url',
+        value: book.url,
+        errors: book.getErrors('url'),
+    }) }}
+
+    {{ forms.elementSelectField({
+        label: 'Cover'|t('mybooks'),
+        instructions: coverVolume
+            ? 'Pick an image, or leave it empty: a cover found with “Look up” is stored in {volume} when you save.'|t('mybooks', { volume: coverVolume.name })
+            : 'Pick an image. A cover found with “Look up” is linked from Open Library, because no cover volume is set in the plugin settings.'|t('mybooks'),
+        id: 'coverAssetId',
+        name: 'coverAssetId',
+        elementType: 'craft\\elements\\Asset',
+        elements: book.cover ? [book.cover] : [],
+        limit: 1,
+        viewMode: 'large',
+        criteria: { kind: ['image'] },
+    }) }}
+    <p id="mybooks-cover-preview-wrap" class="{{ book.cover or not book.coverUrl ? 'hidden' }}">
+        <img id="mybooks-cover-preview" src="{{ not book.cover and book.coverUrl ? book.coverUrl }}" alt="" width="80" style="border-radius: 3px;">
+    </p>
+{% endblock %}
+
+{% js %}
+(() => {
+    const button = document.getElementById('mybooks-lookup');
+    const result = document.getElementById('mybooks-lookup-result');
+    const setValue = (id, value) => {
+        const input = document.getElementById(id);
+        if (input && value) input.value = value;
+    };
+
+    button.addEventListener('click', () => {
+        button.classList.add('loading');
+        result.textContent = '';
+        result.classList.remove('error');
+
+        Craft.sendActionRequest('POST', 'mybooks/books/lookup-isbn', {
+            data: { isbn: document.getElementById('isbn').value },
+        })
+            .then(({ data }) => {
+                const book = data.data ?? data;
+                setValue('title', book.title);
+                setValue('subtitle', book.subtitle);
+                setValue('authors', (book.authors || []).join('\n'));
+                setValue('url', book.url);
+                setValue('isbn', book.isbn);
+                document.getElementById('coverUrl').value = book.coverUrl || '';
+                const wrap = document.getElementById('mybooks-cover-preview-wrap');
+                if (book.coverUrl) {
+                    document.getElementById('mybooks-cover-preview').src = book.coverUrl;
+                    wrap.classList.remove('hidden');
+                } else {
+                    wrap.classList.add('hidden');
+                }
+                result.textContent = {{ 'Found. Check the details and save.'|t('mybooks')|json_encode|raw }};
+            })
+            .catch(({ response }) => {
+                result.textContent = response?.data?.message ?? Craft.t('app', 'A server error occurred.');
+                result.classList.add('error');
+            })
+            .finally(() => button.classList.remove('loading'));
+    });
+})();
+{% endjs %}

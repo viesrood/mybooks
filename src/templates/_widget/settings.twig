@@ -1,0 +1,29 @@
+{% import '_includes/forms.twig' as forms %}
+
+{{ forms.selectField({
+    label: 'Reader'|t('mybooks'),
+    id: 'reader',
+    name: 'reader',
+    options: readerOptions,
+    value: widget.reader ?? '',
+}) }}
+
+{{ forms.selectField({
+    label: 'Shelf'|t('mybooks'),
+    id: 'shelf',
+    name: 'shelf',
+    options: shelfOptions,
+    value: widget.shelf,
+}) }}
+
+{{ forms.textField({
+    label: 'Books per reader'|t('mybooks'),
+    id: 'limit',
+    name: 'limit',
+    type: 'number',
+    min: 1,
+    max: 24,
+    size: 3,
+    value: widget.limit,
+    errors: widget.getErrors('limit'),
+}) }}
